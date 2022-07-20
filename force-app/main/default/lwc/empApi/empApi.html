@@ -1,0 +1,50 @@
+<template>
+    <lightning-card title="My First LWC QLE" icon-name="cus   m:custom14">
+        <!-- <div class="slds-m-around_medium">
+            <p>
+                Use the buttons below to subscribe and unsubscribe to a
+                streaming channel!
+            </p>
+            <lightning-input
+                label="Channel Name"
+                value={channelName}
+                onchange={handleChannelName}
+            ></lightning-input>
+            <lightning-button
+                variant="success"
+                label="Subscribe"
+                title="Subscribe"
+                onclick={handleSubscribe}
+                disabled={isSubscribeDisabled}
+                class="slds-m-left_x-small"
+            ></lightning-button>
+            <lightning-button
+                variant="destructive"
+                label="Unsubscribe"
+                title="Unsubscribe"
+                onclick={handleUnsubscribe}
+                disabled={isUnsubscribeDisabled}
+                class="slds-m-left_x-small"
+            ></lightning-button>
+        </div> -->
+        <div class="slds-m-around_medium">
+            <lightning-input
+                label="Quote Id"
+                value={quoteId}
+                onchange={handleQuoteId}
+            ></lightning-input> 
+            <!-- <lightning-button
+                label="Fetch Quote"
+                title="Fetch Quote"
+                onclick={handleFetch}
+                
+        ></lightning-button> -->
+        <c-emp-child quote-id={quoteId}></c-emp-child>
+        <!-- <ul>
+            <template for:each={quoteLines} for:item="line" for:index="i">
+                <li key={line.i}>Product is {line.record.SBQQ__ProductName__c}. Number of units: {line.record.SBQQ__Quantity__c}. Price is: {line.record.SBQQ__NetTotal__c}</li>
+            </template>
+        </ul> -->
+        </div>
+    </lightning-card>
+</template>

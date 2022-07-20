@@ -1,0 +1,15 @@
+<template>
+    <lightning-spinner if:true={loading} alternative-text="Loading" size="medium"></lightning-spinner>
+    <lightning-datatable
+        key-field="id"
+        data={flatLines}
+        columns={columns}
+        onsave={saveValues}
+        oncellchange={handleCellChange}>
+    </lightning-datatable>
+    <lightning-button
+        label="Save & Calculate"
+        title="Save & Calculate"
+        onclick={saveAndCalculate}    
+    ></lightning-button>
+</template>
