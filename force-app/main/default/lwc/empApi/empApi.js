@@ -11,7 +11,7 @@ import { LightningElement, track } from 'lwc';
 
 export default class EmpApiLWC extends LightningElement {
     channelName = '/event/Test__e';
-    quoteId = 'a0q8Z00000CrR3DQAV';
+    quoteId = 'a0q8Z00000CrR3HQAV';
     isSubscribeDisabled = false;
     isUnsubscribeDisabled = !this.isSubscribeDisabled;
     // quoteLines;
