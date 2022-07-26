@@ -34,73 +34,6 @@ export default class EmpChild extends LightningElement {
     prodTiers = [];
     pricingTierMap = [];
 
-    // connectedCallback() {
-
-
-    //     this.registerErrorListener();
-
-    //     read({ quoteId: this.quoteId })
-    //         .then(quote => {
-    //             this.loading = false;
-    //             this.quote = JSON.parse(quote);
-
-    //             queryPPT({
-    //                 prodLevel1List: this.quote.lineItems.map(line => {
-    //                     return line.record['ProdLevel1__c']
-    //                 })
-    //             })
-    //                 .then(prodTiers => {
-    //                     this.prodTiers = prodTiers;
-    //                 })
-
-
-
-
-    //             queryCT({ accountId: this.quote.record['SBQQ__Account__c'] })
-    //                 .then(tiers => {
-    //                     this.tiers = tiers;
-    //                     const flatLines = this.quote.lineItems.map(line => {
-    //                         return {
-    //                             SBQQ__ProductName__c: line.record['SBQQ__ProductName__c'],
-    //                             SBQQ__Quantity__c: line.record['SBQQ__Quantity__c'],
-    //                             SBQQ__ListPrice__c: line.record['SBQQ__ListPrice__c'],
-    //                             SBQQ__NetPrice__c: line.record['SBQQ__NetPrice__c'],
-    //                             SBQQ__NetTotal__c: line.record['SBQQ__NetTotal__c']
-    //                         }
-    //                     });
-    //                     this.flatLines = flatLines;
-    //                 });
-
-
-    //             const messageCallback = (response) => {
-    //                 read({ quoteId: this.quoteId })
-    //                     .then(quote => {
-    //                         this.quote = JSON.parse(quote);
-    //                         const flatLines = this.quote.lineItems.map(line => {
-    //                             return {
-    //                                 SBQQ__ProductName__c: line.record['SBQQ__ProductName__c'],
-    //                                 SBQQ__Quantity__c: line.record['SBQQ__Quantity__c'],
-    //                                 SBQQ__NetTotal__c: line.record['SBQQ__NetTotal__c']
-    //                             }
-    //                         });
-    //                         this.flatLines = flatLines;
-    //                     })
-    //             };
-
-    //             subscribe(this.channelName, -1, messageCallback).then((response) => {
-    //                 // Response contains the subscription information on subscribe call
-    //                 console.log(
-    //                     'Subscription request sent to: ',
-    //                     JSON.stringify(response.channel)
-    //                 );
-    //                 this.subscription = response;
-    //             });
-
-    //         });
-
-    // }
-
-
 
     connectedCallback(){
         const load = async() => {
@@ -159,96 +92,7 @@ export default class EmpChild extends LightningElement {
         // this handler could inform of changes that would not be saved
     }
 
-    // saveValues(event) {
-    //     try {
-    //         let lines = this.quote.lineItems;
-    //         // Inspect changes
-    //         event.detail.draftValues.forEach((row, index) => {
-
-    //             // Obtain row id
-    //             const rowId = row.id.substring(4);
-    //             // Obtain list of fields that were changed
-    //             const fieldList = Object.keys(row).filter(field => field !== 'id');
-    //             console.log(fieldList);
-
-    //             if (!lines[rowId].parentItemKey) {
-    //                 // Cycle through the fields that were changed
-    //                 for (let field of fieldList) {
-    //                     // change value of fields on that line
-    //                     lines[rowId].record[field] = row[field];
-    //                 }
-    //             }
-
-    //             // BUNDLE LOGIC STARTS HERE --------
-
-    //             // If line is a bundle parent
-    //             if (lines[rowId].record['SBQQ__Bundle__c']) {
-    //                 // Cycle through products that come next
-    //                 for (let i = rowId; i < lines.length; i++) {
-    //                     // if product is a parent
-    //                     if (lines[i].record['SBQQ__Bundle__c']) {
-    //                         continue;
-    //                     }
-    //                     // if product belongs to parent
-    //                     if (lines[i].parentItemKey === lines[rowId].key) {
-    //                         // if is type 'component'
-    //                         if (lines[i].record['SBQQ__OptionType__c'] === 'Component') {
-    //                             // Adjust quantity accordingly
-    //                             lines[i].record['SBQQ__Quantity__c'] = lines[rowId].record['SBQQ__Quantity__c'] * lines[i].record['SBQQ__BundledQuantity__c'];
-    //                         }
-    //                     } else {
-    //                         break; // Stop cycling, reached the end of bundle
-    //                     }
-    //                 }
-    //             }
-
-    //             // BUNDLE LOGIC ENDS HERE --------
-
-    //         });
-
-
-    //         this.quote.lineItems = lines;
-
-    //         lines = this.customerTierScript(this.tiers, this.quote);
-
-    //         this.quote.lineItems = lines;
-
-    //         this.pricingTierMap = this.productPricingTierScript(this.prodTiers);
-
-    //         console.log(this.quote);
-
-    //         console.log("----Price Override----");
-    //         lines = this.priceOverride(this.quote.lineItems)
-    //         console.log(lines);
-
-    //         // Regenerate flat lines object
-    //         const flatLines = this.quote.lineItems.map(line => {
-    //             return {
-    //                 SBQQ__ProductName__c: line.record['SBQQ__ProductName__c'],
-    //                 SBQQ__Quantity__c: line.record['SBQQ__Quantity__c'],
-    //                 SBQQ__ListPrice__c: line.record['SBQQ__ListPrice__c'],
-    //                 SBQQ__NetPrice__c: line.record['SBQQ__NetPrice__c'],
-    //                 SBQQ__NetTotal__c: line.record['SBQQ__NetTotal__c']
-    //             }
-    //         });
-
-
-    //         // Refresh component
-    //         const randDelay = Math.floor(Math.random() * 500) + 500;
-    //         this.loading = true;
-    //         setTimeout(() => {
-    //             this.flatLines = flatLines;
-    //             this.columns = [...columns];
-    //             this.loading = false;
-
-    //         }, randDelay);
-    //     } catch (error) {
-    //         console.log(error);
-    //     }
-
-    // }
-
-
+ 
     saveValues(event) {
         let lines = this.quote.lineItems;
         // Inspect changes
@@ -310,6 +154,11 @@ export default class EmpChild extends LightningElement {
         this.quote.lineItems = lines;
 
         this.pricingTierMap = this.productPricingTierScript(this.prodTiers);
+        
+        console.log("----Price Override----");
+        lines = this.priceOverride(this.quote.lineItems)
+        console.log(lines);
+
 
         // Regenerate flat lines object
         const flatLines = this.quote.lineItems.map(line => {
