@@ -4,6 +4,8 @@ import calculate from '@salesforce/apex/myQuoteCalculator.calculate';
 import queryCT from '@salesforce/apex/CustomerTierController.queryCT';
 import queryPPT from '@salesforce/apex/ProductPricingTierController.queryPPT';
 import queryBlockPrices from '@salesforce/apex/BlockPriceController.queryBlockPrices';
+import queryAscendPackagingAdder from '@salesforce/apex/AscendPackagingAdderController.queryAscendPackagingAdder';
+
 
 import {
     subscribe,
@@ -18,7 +20,9 @@ const columns = [
     { label: 'Quantity', fieldName: 'SBQQ__Quantity__c', type: 'number', editable: true },
     { label: 'List Unit Price', fieldName: 'SBQQ__ListPrice__c', type: 'currency' },
     { label: 'Net Unit Price', fieldName: 'SBQQ__NetPrice__c', type: 'currency' },
-    { label: 'Total', fieldName: 'SBQQ__NetTotal__c', type: 'currency' }
+    { label: 'Total', fieldName: 'SBQQ__NetTotal__c', type: 'currency' },
+    { label: 'Length UOM', fieldName: 'Length_UOM__c', type: 'picklist', editable: true},
+    { label: 'Length', fieldName: 'Length__c', type: 'text', editable: true}
 ];
 
 export default class EmpChild extends LightningElement {
@@ -33,6 +37,7 @@ export default class EmpChild extends LightningElement {
     tiers = [];
     prodTiers = [];
     pricingTierMap = [];
+    ascendPackagingList = [];
 
 
     connectedCallback(){
@@ -46,16 +51,19 @@ export default class EmpChild extends LightningElement {
                     return line.record['SBQQ__Product__c'];
                 });
             const listBlockProducts = "('" + blockProducts.join("', '") + "')";
-            const [tiers, prodTiers, blockPrices] = await Promise.all([
+            const [tiers, prodTiers, blockPrices, ascendPackagingList] = await Promise.all([
                 queryCT({accountId: this.quote.record['SBQQ__Account__c']}),
                 queryPPT({prodLevel1List: this.quote.lineItems.map(line => {
                     return line.record['ProdLevel1__c']})
                 }),
-                queryBlockPrices({listProduct: listBlockProducts})
+                queryBlockPrices({listProduct: listBlockProducts}),
+                queryAscendPackagingAdder()
                 ]);
+            console.log(this.quote.lineItems)
             this.tiers = tiers;
             this.prodTiers = prodTiers;
             this.blockPrices = blockPrices;
+            this.ascendPackagingList = ascendPackagingList;
             const flatLines = this.quote.lineItems.map(line => {
                 return {
                     SBQQ__ProductName__c: line.record['SBQQ__ProductName__c'],
@@ -63,13 +71,18 @@ export default class EmpChild extends LightningElement {
                     SBQQ__ListPrice__c: line.record['SBQQ__ListPrice__c'],
                     SBQQ__SpecialPrice__c: line.record['SBQQ__SpecialPrice__c'],
                     SBQQ__NetPrice__c: line.record['SBQQ__NetPrice__c'],
-                    SBQQ__NetTotal__c: line.record['SBQQ__NetTotal__c']
+                    SBQQ__NetTotal__c: line.record['SBQQ__NetTotal__c'],
+                    Length_UOM__c: line.record['Length_UOM__c'],
+                    Length__c: line.record['Length__c']
                 }
             });
             return flatLines;
         }
+        
         load().then(flatLines => { this.flatLines = flatLines; this.loading = false; console.log('Script loaded');});
+      
     }
+
 
     
 
@@ -95,6 +108,7 @@ export default class EmpChild extends LightningElement {
  
     saveValues(event) {
         let lines = this.quote.lineItems;
+        // console.log(lines)
         // Inspect changes
         event.detail.draftValues.forEach((row, index) => {
             // Obtain row id
@@ -108,6 +122,7 @@ export default class EmpChild extends LightningElement {
                     lines[rowId].record[field] = row[field];
                 }
             }
+            console.log(lines)
             // BUNDLE LOGIC STARTS HERE --------
             // If line is a bundle parent
             if(lines[rowId].record['SBQQ__Bundle__c']) {
@@ -129,8 +144,10 @@ export default class EmpChild extends LightningElement {
                     }
                 }
             }
+            
         // BUNDLE LOGIC ENDS HERE --------
         });
+      
         // BLOCKPRICES LOGIC STARTS HERE -----------
         for(let line of lines){
             // Check if block price exists
@@ -149,15 +166,24 @@ export default class EmpChild extends LightningElement {
             }
         }
         // BLOCKPRICES LOGIC ENDS HERE -----------
+        
         this.quote.lineItems = lines;
+       
+
         lines = this.customerTierScript(this.tiers, this.quote);
+        console.log(lines)
         this.quote.lineItems = lines;
 
         this.pricingTierMap = this.productPricingTierScript(this.prodTiers);
+
+        
         
         console.log("----Price Override----");
         lines = this.priceOverride(this.quote.lineItems)
-        console.log(lines);
+
+        console.log('-----------setCableAssemblyName-----------')
+        lines = this.setCableAssemblyName(this.quote.lineItems, this.ascendPackagingList)
+        console.log(lines)
 
 
         // Regenerate flat lines object
@@ -168,7 +194,10 @@ export default class EmpChild extends LightningElement {
                 SBQQ__ListPrice__c: line.record['SBQQ__ListPrice__c'],
                 SBQQ__SpecialPrice__c: line.record['SBQQ__SpecialPrice__c'],
                 SBQQ__NetPrice__c: line.record['SBQQ__NetPrice__c'],
-                SBQQ__NetTotal__c: line.record['SBQQ__NetTotal__c']
+                SBQQ__NetTotal__c: line.record['SBQQ__NetTotal__c'],
+                Length_UOM__c: line.record['Length_UOM__c'],
+                Length__c: line.record['Length__c']
+
             }
         });
         // Refresh component
@@ -236,7 +265,6 @@ export default class EmpChild extends LightningElement {
         return pricingTierMap;
     }
 
-
     priceOverride(lines) {
 
         console.log(lines)
@@ -262,6 +290,129 @@ export default class EmpChild extends LightningElement {
         })
 
         return overridedLines;
+    }
+
+
+    setCableAssemblyName(lines, ascendPackagingList){
+        
+        let uomSuffix = '';
+        let AttUomSuffix = '';
+        let AttUomDescSuffix = '';
+        let convFactor = 1;
+        let itemDesc = '';
+
+        const overrideLines = lines.map(line =>{
+
+            //when line.record['Product_Name_Key_Field_Text__c'] is blank that indicates that the product was just added to the line
+            if (!line.record['Product_Name_Key_Field_Text__c']) {
+                //backup the list price to the original price field. so it can be used to recalculate if the user changes qty 
+                line.record['SBQQ__OriginalPrice__c'] = line.record['SBQQ__ListPrice__c'];
+            }
+
+            if (line.record['Length__c'] && line.record['Length_UOM__c'] && (!line.record['Product_Name_Key_Field_Text__c'] || (line.record['Product_Name_Key_Field_Text__c'] && line.record['Product_Name_Key_Field_Text__c'] != (line.record['Length__c'] + "~" + line.record['Length_UOM__c'])))) {
+                // console.log('Name change required for line number: '+ line.record['SBQQ__Number__c']);
+
+                if (line.record['Length_UOM__c'] === 'Feet' || line.record['Length_UOM__c'] === 'FT') {
+                    uomSuffix = 'FT';
+                    AttUomSuffix = 'F';
+                    AttUomDescSuffix = 'FT';
+                    convFactor = 3.281;
+                }else{
+                    AttUomSuffix = 'M';
+                    AttUomDescSuffix = 'M';
+                }
+
+                const lengthSuffix = String("0000" + line.record['Length__c']).slice(-4);
+                // console.log('lengthSuffix: ' + lengthSuffix);
+
+                let FinalItem = line.record['SBQQ__ProductName__c'] +"-"+String(lengthSuffix)+uomSuffix;
+
+                if(line.record['Quote_Item_Description_Part_B__c'] && line.record['Quote_Item_Description_Part_B__c'].includes("ASCEND")) {
+                    // console.log('Ascend Product');
+                    const suffixString = String(lengthSuffix)+uomSuffix;
+                    const DescPartBNew = line.record['Quote_Item_Description_Part_B__c'].replace("XXXX", suffixString);
+                    itemDesc = line.record['Quote_Item_Description_Part_A__c'] + " "+line.record['Length__c']+line.record['Length_UOM__c']+","+DescPartBNew;
+                }else {
+                    // console.log('Other Product');
+                    itemDesc = line.record['Quote_Item_Description_Part_A__c'] + " "+line.record['Length__c']+line.record['Length_UOM__c']+","+line.record['Quote_Item_Description_Part_B__c']+"-"+String(lengthSuffix)+uomSuffix;
+                }
+
+
+                if (line.record['Customer__c']=== 'ATT' && line.record['Product_Type__c'] === 'HFC Cable') {
+                    FinalItem = line.record['Base_Design_Code__c'] +String(lengthSuffix)+AttUomSuffix;
+                    itemDesc = "Tip to Tip Length : "+line.record['Length__c']+AttUomDescSuffix+" "+line.record['Quote_Item_Description_Part_A__c'];
+                }
+
+                if (line.record['Customer__c']=== 'ATT' && line.record['Product_Type__c'] === 'HFC Cable' && line.record['Base_Design_Code__c']) {
+                    itemDesc = line.record['Quote_Item_Description_Part_A__c'] + " " + line.record['Length__c']+AttUomDescSuffix;
+                }
+
+                if (line.record['Customer__c']=== 'ATT' && line.record['Product_Type__c'] === 'Interconnect Cable' && line.record['Base_Design_Code__c']) {
+                    FinalItem = line.record['Base_Design_Code__c'] +"-" +String(lengthSuffix)+uomSuffix;
+                }
+
+                if (line.record['Customer__c']=== 'ATT' && line.record['Product_Type__c'] === 'Interconnect Cable' && line.record['Base_Design_Code__c']) {
+                    FinalItem = line.record['Base_Design_Code__c'] +"-" +String(lengthSuffix)+uomSuffix;
+                }
+
+                line.record['SBQQ__PackageProductCode__c'] = FinalItem;
+                line.record['SBQQ__PackageProductDescription__c'] = itemDesc;
+                line.record['SBQQ__Description__c'] = itemDesc;
+                line.record['Product_Name_Key_Field_Text__c'] = line.record['Length__c'] + "~" + line.record['Length_UOM__c'];
+                
+                // console.log('FinalItem: ' + FinalItem);
+
+                convFactor = 1;
+                const fixedPrice = line.record['SBQQ__OriginalPrice__c'];
+                const varPrice = line.record['Variable_Price_1__c'];
+
+                if (line.record['Length_UOM__c'] == 'Feet' || line.record['Length_UOM__c'] == 'Foot' || line.record['Length_UOM__c'] == 'FT') {
+                    convFactor = 3.281;
+                }
+        
+                let listPrice = (fixedPrice + (varPrice * line.record['Length__c'] / convFactor));
+        
+                // console.log('list price updated to = '+ listPrice);
+                
+                line.record['SBQQ__ListPrice__c'] = listPrice;
+
+                if (line.record['Fixed_Cost__c'] && line.record['CableCostPerMeter__c'] ) {
+                    line.record['Unit_Cost__c'] = (line.record['Fixed_Cost__c'] + (line.record['CableCostPerMeter__c'] * line.record['Length__c'] / convFactor));
+                }
+
+               
+
+                //if the product is ASCEND, we need to add a packaging cost
+                
+                if (line.record['Product_Type__c'] && line.record['Product_Type__c'].toUpperCase().includes('ASCEND')) {
+                    // console.log('++++++++++++++++++Adding Ascend Package Adder++++++++++++++++++');
+                    // console.log('Price before Ascend Packaging adder = ' + listPrice);
+                    // console.log('Length before = ' + line.record['Length__c']);
+                    const qpLength = line.record['Length__c'] / convFactor;
+                    // console.log('Length after = ' + qpLength);
+
+                    for (let i=0; i < ascendPackagingList.length; i++) {
+                        //log('count factor from table / FiberCount from Quote Line = '+ ascendPackagingList[i].Count_Factor__c.toString() + ' / ' +FiberCount);
+                        if (ascendPackagingList[i].Count_Factor__c.toString() === line.record['Fiber_Count__c']) {       
+                            if (qpLength <= ascendPackagingList[i].Length_Maximum__c) {
+                                // console.log('Length max = ' + ascendPackagingList[i].Length_Maximum__c);
+                                listPrice += ascendPackagingList[i].Price__c;
+                                // console.log('Price adder = ' + ascendPackagingList[i].Price__c);
+                                break;   // jump out of the loop
+                            }
+                        }
+                    }
+                    // console.log('Price after = ' + listPrice);
+                    // console.log('++++++++++++++++++Adding Ascend Package Adder++++++++++++++++++');
+
+                    line.record['SBQQ__ListPrice__c'] = listPrice;
+                }
+
+            }
+
+            return line
+        })
+        return overrideLines
     }
 
 }
