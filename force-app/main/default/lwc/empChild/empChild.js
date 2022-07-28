@@ -362,7 +362,7 @@ export default class EmpChild extends LightningElement {
                 
                 // console.log('FinalItem: ' + FinalItem);
 
-                convFactor = 1;
+                // convFactor = 1;
                 const fixedPrice = line.record['SBQQ__OriginalPrice__c'];
                 const varPrice = line.record['Variable_Price_1__c'];
 
