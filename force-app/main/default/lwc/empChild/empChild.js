@@ -5,15 +5,14 @@ import queryCT from '@salesforce/apex/CustomerTierController.queryCT';
 import queryPPT from '@salesforce/apex/ProductPricingTierController.queryPPT';
 import queryBlockPrices from '@salesforce/apex/BlockPriceController.queryBlockPrices';
 import queryAscendPackagingAdder from '@salesforce/apex/AscendPackagingAdderController.queryAscendPackagingAdder';
+import queryUOM from '@salesforce/apex/UomConversionController.queryUOM';
 
+import { getObjectInfo } from 'lightning/uiObjectInfoApi';
+import { getPicklistValues } from 'lightning/uiObjectInfoApi';
+import { ShowToastEvent } from 'lightning/platformShowToastEvent';
+import QUOTELINE_OBJECT from '@salesforce/schema/SBQQ__QuoteLine__c';
+import LENGTH_UOM_FIELD from '@salesforce/schema/SBQQ__QuoteLine__c.Length_UOM__c';
 
-import {
-    subscribe,
-    unsubscribe,
-    onError,
-    setDebugFlag,
-    isEmpEnabled,
-} from 'lightning/empApi';
 
 const columns = [
     { label: 'Name', fieldName: 'SBQQ__ProductName__c' },
@@ -21,7 +20,9 @@ const columns = [
     { label: 'List Unit Price', fieldName: 'SBQQ__ListPrice__c', type: 'currency' },
     { label: 'Net Unit Price', fieldName: 'SBQQ__NetPrice__c', type: 'currency' },
     { label: 'Total', fieldName: 'SBQQ__NetTotal__c', type: 'currency' },
-    { label: 'Length UOM', fieldName: 'Length_UOM__c', type: 'picklist', editable: true},
+    // replace
+    { label: 'Length UOM', sortable: true, fieldName: 'Length_UOM__c' , type: "button",
+        typeAttributes: { label: { fieldName: 'Length_UOM__c' }, name: 'changeLengthUOM', value: { fieldName: 'Length_UOM__c' }, icPosition: 'right', variant: 'base', iconName: 'utility:chevrondown' }},
     { label: 'Length', fieldName: 'Length__c', type: 'text', editable: true}
 ];
 
@@ -32,8 +33,6 @@ export default class EmpChild extends LightningElement {
     flatLines = [];
     @track columns = columns;
     @track loading = true;
-    subscription = {};
-    channelName = '/event/Test__e';
     tiers = [];
     prodTiers = [];
     pricingTierMap = [];
@@ -59,11 +58,38 @@ export default class EmpChild extends LightningElement {
                 queryBlockPrices({listProduct: listBlockProducts}),
                 queryAscendPackagingAdder()
                 ]);
-            console.log(this.quote.lineItems)
+            //console.log(this.quote.lineItems)
             this.tiers = tiers;
             this.prodTiers = prodTiers;
             this.blockPrices = blockPrices;
             this.ascendPackagingList = ascendPackagingList;
+
+
+            // get fields from UOM Object (Should this go here?)
+            const uomFields = await queryUOM()
+            this.uomFields = uomFields;
+            this.buildUOMConvertMap(this.uomFields);
+            this.uomtMap = this.buildUOMConvertMap(this.uomFields);
+
+            console.log("---princingTierMap---");
+
+            this.pricingTierMap = this.productPricingTierScript(this.prodTiers);
+    
+
+            const pricingTierMapQtyRecs = this.getPricingTierMapQtyRecs(this.pricingTierMap, this.quote.lineItems);
+       
+
+            console.log(this.quote.lineItems)
+
+            const convertedUOM = this.quote.lineItems.map(line => {
+
+                return this.convertUOM(line.record.SBQQ__Quantity__c, line.record.UOM__c, pricingTierMapQtyRecs[0].Quantity_UOM__c, line.record.SBQQ__Product__c, line.record.ProdLevel1__c, line.record.ProdLevel2__c, this.uomtMap);
+
+            })
+
+            console.log(convertedUOM);
+
+
             const flatLines = this.quote.lineItems.map(line => {
                 return {
                     SBQQ__ProductName__c: line.record['SBQQ__ProductName__c'],
@@ -83,23 +109,13 @@ export default class EmpChild extends LightningElement {
       
     }
 
-
+    //GETTING PICKLIST VALUES IN UOM/LENGTH UOM/ DEPENDENT ON LEVEL 2
+    @wire(getObjectInfo, { objectApiName: QUOTELINE_OBJECT })
+    objectInfo;
+    @wire(getPicklistValues, { recordTypeId: '$objectInfo.data.defaultRecordTypeId', fieldApiName: LENGTH_UOM_FIELD})
+    lengthUom;
     
 
-    disconnectedCallback() {
-        unsubscribe(this.subscription, (response) => {
-            console.log('unsubscribe() response: ', JSON.stringify(response));
-            // Response is true for successful unsubscribe
-        });
-    }
-
-    registerErrorListener() {
-        // Invoke onError empApi method
-        onError((error) => {
-            console.log('Received error from server: ', JSON.stringify(error));
-            // Error contains the server-side error
-        });
-    }
 
     handleCellChange(event) {
         // this handler could inform of changes that would not be saved
@@ -168,24 +184,41 @@ export default class EmpChild extends LightningElement {
         // BLOCKPRICES LOGIC ENDS HERE -----------
         
         this.quote.lineItems = lines;
-       
 
-        lines = this.customerTierScript(this.tiers, this.quote);
+        this.qcpScript();
+    }
+
+    timeBeforeSave = 0;
+    saveAndCalculate() {
+        calculate({ quoteJSON: JSON.stringify(this.quote) });
+    }
+
+    qcpScript(){
+        let lines = this.customerTierScript(this.tiers, this.quote);
         console.log(lines)
         this.quote.lineItems = lines;
 
         this.pricingTierMap = this.productPricingTierScript(this.prodTiers);
-
-        
         
         console.log("----Price Override----");
         lines = this.priceOverride(this.quote.lineItems)
+        
 
         console.log('-----------setCableAssemblyName-----------')
         lines = this.setCableAssemblyName(this.quote.lineItems, this.ascendPackagingList)
         console.log(lines)
+        
+
+        console.log('---------setBusConductor------------')
+        lines=this.setBusConductorPrice(this.quote.lineItems)
+        console.log(lines)
+        
+
+        this.regenerateFlatLines(1000);
+    }
 
 
+    regenerateFlatLines(delay){
         // Regenerate flat lines object
         const flatLines = this.quote.lineItems.map(line => {
             return {
@@ -201,21 +234,13 @@ export default class EmpChild extends LightningElement {
             }
         });
         // Refresh component
-        const randDelay = Math.floor(Math.random() * 500) + 500;
+        const randDelay = Math.floor(Math.random() * delay/2) + delay/2;
         this.loading = true;
         setTimeout(() => {
             this.flatLines = flatLines;
             this.columns = [...columns];
             this.loading = false;
         }, randDelay);
-    }
-
-
-
-
-    timeBeforeSave = 0;
-    saveAndCalculate() {
-        calculate({ quoteJSON: JSON.stringify(this.quote) });
     }
 
     // Custom price calculation
@@ -310,6 +335,7 @@ export default class EmpChild extends LightningElement {
             }
 
             if (line.record['Length__c'] && line.record['Length_UOM__c'] && (!line.record['Product_Name_Key_Field_Text__c'] || (line.record['Product_Name_Key_Field_Text__c'] && line.record['Product_Name_Key_Field_Text__c'] != (line.record['Length__c'] + "~" + line.record['Length_UOM__c'])))) {
+
                 // console.log('Name change required for line number: '+ line.record['SBQQ__Number__c']);
 
                 if (line.record['Length_UOM__c'] === 'Feet' || line.record['Length_UOM__c'] === 'FT') {
@@ -323,17 +349,14 @@ export default class EmpChild extends LightningElement {
                 }
 
                 const lengthSuffix = String("0000" + line.record['Length__c']).slice(-4);
-                // console.log('lengthSuffix: ' + lengthSuffix);
 
                 let FinalItem = line.record['SBQQ__ProductName__c'] +"-"+String(lengthSuffix)+uomSuffix;
 
                 if(line.record['Quote_Item_Description_Part_B__c'] && line.record['Quote_Item_Description_Part_B__c'].includes("ASCEND")) {
-                    // console.log('Ascend Product');
                     const suffixString = String(lengthSuffix)+uomSuffix;
                     const DescPartBNew = line.record['Quote_Item_Description_Part_B__c'].replace("XXXX", suffixString);
                     itemDesc = line.record['Quote_Item_Description_Part_A__c'] + " "+line.record['Length__c']+line.record['Length_UOM__c']+","+DescPartBNew;
                 }else {
-                    // console.log('Other Product');
                     itemDesc = line.record['Quote_Item_Description_Part_A__c'] + " "+line.record['Length__c']+line.record['Length_UOM__c']+","+line.record['Quote_Item_Description_Part_B__c']+"-"+String(lengthSuffix)+uomSuffix;
                 }
 
@@ -351,18 +374,12 @@ export default class EmpChild extends LightningElement {
                     FinalItem = line.record['Base_Design_Code__c'] +"-" +String(lengthSuffix)+uomSuffix;
                 }
 
-                if (line.record['Customer__c']=== 'ATT' && line.record['Product_Type__c'] === 'Interconnect Cable' && line.record['Base_Design_Code__c']) {
-                    FinalItem = line.record['Base_Design_Code__c'] +"-" +String(lengthSuffix)+uomSuffix;
-                }
 
                 line.record['SBQQ__PackageProductCode__c'] = FinalItem;
                 line.record['SBQQ__PackageProductDescription__c'] = itemDesc;
                 line.record['SBQQ__Description__c'] = itemDesc;
                 line.record['Product_Name_Key_Field_Text__c'] = line.record['Length__c'] + "~" + line.record['Length_UOM__c'];
                 
-                // console.log('FinalItem: ' + FinalItem);
-
-                // convFactor = 1;
                 const fixedPrice = line.record['SBQQ__OriginalPrice__c'];
                 const varPrice = line.record['Variable_Price_1__c'];
 
@@ -371,48 +388,235 @@ export default class EmpChild extends LightningElement {
                 }
         
                 let listPrice = (fixedPrice + (varPrice * line.record['Length__c'] / convFactor));
-        
-                // console.log('list price updated to = '+ listPrice);
-                
                 line.record['SBQQ__ListPrice__c'] = listPrice;
 
                 if (line.record['Fixed_Cost__c'] && line.record['CableCostPerMeter__c'] ) {
                     line.record['Unit_Cost__c'] = (line.record['Fixed_Cost__c'] + (line.record['CableCostPerMeter__c'] * line.record['Length__c'] / convFactor));
                 }
 
-               
-
                 //if the product is ASCEND, we need to add a packaging cost
-                
                 if (line.record['Product_Type__c'] && line.record['Product_Type__c'].toUpperCase().includes('ASCEND')) {
-                    // console.log('++++++++++++++++++Adding Ascend Package Adder++++++++++++++++++');
-                    // console.log('Price before Ascend Packaging adder = ' + listPrice);
-                    // console.log('Length before = ' + line.record['Length__c']);
                     const qpLength = line.record['Length__c'] / convFactor;
-                    // console.log('Length after = ' + qpLength);
 
                     for (let i=0; i < ascendPackagingList.length; i++) {
-                        //log('count factor from table / FiberCount from Quote Line = '+ ascendPackagingList[i].Count_Factor__c.toString() + ' / ' +FiberCount);
                         if (ascendPackagingList[i].Count_Factor__c.toString() === line.record['Fiber_Count__c']) {       
                             if (qpLength <= ascendPackagingList[i].Length_Maximum__c) {
-                                // console.log('Length max = ' + ascendPackagingList[i].Length_Maximum__c);
                                 listPrice += ascendPackagingList[i].Price__c;
-                                // console.log('Price adder = ' + ascendPackagingList[i].Price__c);
                                 break;   // jump out of the loop
                             }
                         }
                     }
-                    // console.log('Price after = ' + listPrice);
-                    // console.log('++++++++++++++++++Adding Ascend Package Adder++++++++++++++++++');
-
                     line.record['SBQQ__ListPrice__c'] = listPrice;
                 }
-
             }
-
             return line
         })
         return overrideLines
+    }
+
+    isLengthUomModalOpen = false;
+    dataRow;
+    handleRowAction(event) {
+        this.dataRow = event.detail.row;
+        switch(event.detail.action.name){
+            case 'changeLengthUOM':
+                    this.searchLengthUomValues();
+                    this.isLengthUomModalOpen = true;
+                    break;
+            default:
+                alert('There is an error trying to complete this action');
+            }
+    }
+
+    lengthUomList = [];
+    searchLengthUomValues(){
+        if(this.lengthUom.data.values){
+            this.lengthUomList = this.lengthUom.data.values;
+        } else {
+            const evt = new ShowToastEvent({
+                title: 'There is not lengthUom for this quote line',
+                message: 'Please, do not change the Length UOM value, it is not available now.',
+                variant: 'warning', mode: 'dismissable'
+            });
+            this.dispatchEvent(evt);
+            this.closeLengthUomModal();
+        }
+    }
+
+    closeLengthUomModal(){
+        this.isLengthUomModalOpen = false;
+    }
+
+    newLengthUOM = '';
+    lengthUomHandler(event){
+        this.newLengthUOM = event.target.value;
+    }
+
+    saveLengthUom(){
+        //SPECIAL BEHAVIOR TO ADD LENGTH BASE VALUES
+        // if (this.dataRow.filteredGrouping == 'Cable Assemblies' || this.dataRow.productType == 'Patch Panel - Stubbed'){
+        //     this.dataRow.qlevariableprice = 'Cable Length';
+        // } else {
+        //     newQuotelines[i].qlevariableprice = null ;
+        // }
+        // if (!(this.dataRow.qlevariableprice == 'Cable Length')){
+        //     this.newLengthUOM = 'NA';
+        // }
+        if(this.newLengthUOM === '' || this.newLengthUOM == null){
+            console.log('No changes but save value.');
+        } else {
+            let index = this.quote.lineItems.findIndex(x => x.id === this.dataRow.id);
+            this.quote.lineItems[index].record['Length_UOM__c'] = this.newLengthUOM;
+            this.closeLengthUomModal();
+            this.regenerateFlatLines(0);
+        }
+        
+        this.qcpScript();
+    }
+
+    setBusConductorPrice(lines){
+        
+        let RegionAdder = 0;
+        let PieceCount = 0;	
+        let CalcPrice1 = 0;
+        let CalcPrice2 = 0;
+        let FinalPrice = 0;
+        
+        const overrideLines = lines.map(line =>{
+                    
+            //when keyFieldText is blank that indicates that the product was just added to the line
+            if (!line.record['Product_Name_Key_Field_Text__c']) {
+                //backup the list price to the original price field. so it can be used to recalculate if the user changes qty 
+                line.record['SBQQ__OriginalPrice__c'] = line.record['SBQQ__ListPrice__c'];
+            }
+            
+            if (line.record['SBQQ__Quantity__c'] && (!line.record['Product_Name_Key_Field_Text__c'] || (line.record['Product_Name_Key_Field_Text__c'] && line.record['Product_Name_Key_Field_Text__c'] != (line.record['SBQQ__Quantity__c'] + "~" + line.record['Region_Code__c'])))) {
+            
+                if (line.record['Region_Code__c']== 'East') {
+                    RegionAdder = line.record['Region_Adder_East__c'];                           
+                }
+                else if (line.record['Region_Code__c']== 'West') {
+                    RegionAdder = line.record['Region_Adder_West__c'];         
+                }
+                else if (line.record['Region_Code__c']== 'Central') {
+                    RegionAdder = line.record['Region_Adder_Central__c'];        
+                }
+                else if (line.record['Region_Code__c']== 'Northwest') {
+                    RegionAdder = line.record['Region_Adder_Northwest__c'];        
+                }
+                                
+                PieceCount = line.record['Count_Factor__c']/line.record['SBQQ__Quantity__c'];
+                                
+                var FinalCost = (line.record['Weight_lbs_per_foot__c'] * (RegionAdder + line.record['SBQQ__OriginalPrice__c'])) + PieceCount;
+                                
+                if (line.record['Bus_Margin_Low_Value__c'] != 0) {
+                    CalcPrice1 = FinalCost/line.record['Bus_Margin_Low_Value__c'];
+                }
+                if (line.record['Bus_Margin_High_Value__c'] != 0) {
+                    CalcPrice2 = FinalCost/line.record['Bus_Margin_High_Value__c'];
+                }
+
+                if ((CalcPrice1 * line.record['SBQQ__Quantity__c']) < line.record['Margin_Change_Value__c']) {
+                    FinalPrice = CalcPrice1;                     
+                }
+                else {
+                    FinalPrice = CalcPrice2;
+                }	
+                                
+                line.record['Product_Name_Key_Field_Text__c'] = line.record['SBQQ__Quantity__c'] + "~" + line.record['Region_Code__c'];
+                line.record['SBQQ__ListPrice__c'] = FinalPrice;
+            }
+            return line;
+        })
+        return overrideLines;
+        
+    }
+
+    //A quantity converted to the new UOM must be returned 
+    convertUOM(numToConvert, fromUOM, toUOM, productId, productLevel1, productLevel2, uomConvertMap) {
+
+        if (numToConvert != null) {
+            if (fromUOM == toUOM) {
+                return numToConvert;
+            } else {
+
+                var convFactor = 0;
+
+                if (productId != null) {
+                    convFactor = uomConvertMap[productId + '~' + fromUOM + '~' + toUOM];
+
+                    console.log('product specific conv factor = ' + convFactor);
+                    console.log(`${numToConvert} ${productId} ${fromUOM} ${toUOM} ${numToConvert * convFactor}`);
+                }
+
+                if ((!convFactor) && productLevel1 && productLevel2) {
+                    convFactor = uomConvertMap[productLevel1 + '~' + productLevel2 + '~' + fromUOM + '~' + toUOM];
+
+                    console.log(`${numToConvert} ${fromUOM} ${toUOM} ${productLevel1} ${productLevel2} ${numToConvert * convFactor}`);
+                    console.log('product class conv factor = ' + convFactor);
+                }
+
+                console.log('ConvFactor: ' + convFactor);
+
+                if (!convFactor) {
+                    return 0;
+                }
+                return (numToConvert * convFactor);
+            }
+        } else {
+            return null;
+        }
+    }
+
+    getPricingTierMapQtyRecs(pricingTierMap, quoteLines) {
+        // Loop through lines
+        var pricingTierMapQtyRecs = []
+
+        quoteLines.map(line => {
+
+            if (line.record['ProdLevel1__c'] && line.record['Tier__c']) {
+
+                if (pricingTierMap[line.record['Tier__c'] + '~' + line.record['ProdLevel1__c'] + '~' + line.record['ProdLevel2__c'] + '~' + line.record['ProdLevel3__c'] + '~' + line.record['ProdLevel4__c']]) {
+                    pricingTierMapQtyRecs = [pricingTierMap[line.record['Tier__c'] + '~' + line.record['ProdLevel1__c'] + '~' + line.record['ProdLevel2__c'] + '~' + line.record['ProdLevel3__c'] + '~' + line.record['ProdLevel4__c']]]
+                }
+                else if (pricingTierMap[line.record['Tier__c'] + '~' + line.record['ProdLevel1__c'] + '~' + line.record['ProdLevel2__c'] + '~' + line.record['ProdLevel3__c'] + '~Any Value']) {
+                    pricingTierMapQtyRecs = [pricingTierMap[line.record['Tier__c'] + '~' + line.record['ProdLevel1__c'] + '~' + line.record['ProdLevel2__c'] + '~' + line.record['ProdLevel3__c'] + '~Any Value']]
+                }
+                else if (pricingTierMap[line.record['Tier__c'] + '~' + line.record['ProdLevel1__c'] + '~' + line.record['ProdLevel2__c'] + '~Any Value~Any Value']) {
+                    pricingTierMapQtyRecs = [pricingTierMap[line.record['Tier__c'] + '~' + line.record['ProdLevel1__c'] + '~' + line.record['ProdLevel2__c'] + '~Any Value~Any Value']]
+                }
+                else if (pricingTierMap[line.record['Tier__c'] + '~' + line.record['ProdLevel1__c'] + '~Any Value~Any Value~Any Value']) {
+                    pricingTierMapQtyRecs = [pricingTierMap[line.record['Tier__c'] + '~' + line.record['ProdLevel1__c'] + '~Any Value~Any Value~Any Value']]
+                }
+            }
+
+        })
+        console.log(pricingTierMapQtyRecs)
+        return pricingTierMapQtyRecs;
+    }
+
+    // UOM Conversion Map
+    buildUOMConvertMap(uomFields) {
+
+        if (uomFields?.length) {
+
+            var uomMap = uomFields.reduce((o, record) => Object.assign(o, record.Product__c ? {
+                [record.Product__c + '~' + record.From_UOM__c + '~' + record.To_UOM__c]: record.Conversion_Factor__c
+            } : {
+                [record.Product_Level_1__c + '~' + record.Product_Level_2__c + '~' + record.From_UOM__c + '~' + record.To_UOM__c]: record.Conversion_Factor__c
+            }), {});
+
+            //enter the reverse conversions in the map
+
+            uomFields.map(record => {
+                uomMap[record.Product__c ?
+                    record.Product__c + '~' + record.To_UOM__c + '~' + record.From_UOM__c
+                    : record.Product_Level_1__c + '~' + record.Product_Level_2__c + '~' + record.To_UOM__c + '~' + record.From_UOM__c]
+                    = 1 / record.Conversion_Factor__c;
+            })
+
+            return uomMap;
+        }
     }
 
 }

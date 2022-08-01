@@ -5,8 +5,31 @@
         data={flatLines}
         columns={columns}
         onsave={saveValues}
-        oncellchange={handleCellChange}>
+        oncellchange={handleCellChange}
+        onrowaction={handleRowAction}>
     </lightning-datatable>
+    <!--LENGTH UOM POP-UP START-->
+    <template if:true={isLengthUomModalOpen}>
+        <section role="dialog" tabindex="-1" aria-labelledby="modal-heading-01" aria-modal="true" aria-describedby="modal-content-id-1" class="slds-modal slds-fade-in-open">
+            <div class="slds-modal__container slds-modal__container_uom">
+                <header class="slds-modal__header slds-var-m-left_small  slds-var-m-right_small">
+                    <h2 class="slds-text-heading_medium slds-hyphenate">Changing LENGTH UOM: {dataRow.Length_UOM__c}</h2>
+                    <lightning-icon class="slds-modal__close" icon-name="utility:close" size="small" onclick={closeLengthUomPopup}></lightning-icon>
+                </header>
+                <div style="overflow: initial;" class="slds-modal__content slds-p-around_medium slds-var-m-left_small  slds-var-m-right_small" >
+                    <lightning-combobox class="slds-align_absolute-center" style="width:80%" name="lengthuom" label="Length UOM" value={newLengthUOM}
+                    options={lengthUomList} onchange={lengthUomHandler}>
+                    </lightning-combobox>
+                </div>
+                <footer class="slds-modal__footer slds-var-m-left_small  slds-var-m-right_small">
+                    <button class="slds-button slds-button_neutral" onclick={closeLengthUomModal} title="Cancel">Cancel</button>
+                    <button class="slds-button slds-button_brand" onclick={saveLengthUom} title="Change">Change</button>
+                </footer>
+            </div>
+        </section>
+        <div class="slds-backdrop slds-backdrop_open"></div>
+    </template>
+    <!--LENGTH UOM POP-UP END-->
     <lightning-button
         label="Save & Calculate"
         title="Save & Calculate"
