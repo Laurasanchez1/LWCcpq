@@ -16,9 +16,4 @@ public class QuoteLineModel {
     public Boolean productHasDimensions {get; set;}
     public Decimal targetCustomerAmount {get; set;}
     public Decimal targetCustomerTotal {get; set;}
-    public Boolean priceOverrideApprovalRequired {get; set;}
-    public String approvalReasons {get; set;}
-    public Decimal originalPrice {get; set;}
-    public Decimal netPrice{get; set;}
-    
 }

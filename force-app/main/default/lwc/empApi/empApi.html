@@ -1,5 +1,42 @@
 <template>
-    <lightning-card title="My First LWC QLE" icon-name="cus   m:custom14">
+    <lightning-card title="QLE User Interface" icon-name="cus   m:custom14">
+        <!--SAVE & DISCOUNT  BUTTONS START-->
+        <lightning-layout multiple-rows class="slds-border_top slds-border_right slds-border_left slds-var-m-right_large slds-var-m-left_large"> 
+            <lightning-layout-item size="12" small-device-size="6" padding="around-small">
+                <div class="slds-col slds-align_absolute-center">
+                    <lightning-input  id="discountinput" style="width: 100px;" class="" type="number" label="Line Discount (%)" placeholder="50" value={valueDiscount} onchange={handleValueDiscount}></lightning-input>
+                    <lightning-button class="stretchButton slds-var-m-top_medium slds-var-m-left_x-small" variant="brand" label="Apply" disabled={disableButton} onclick={handleApplyDiscount}></lightning-button>
+                    <lightning-helptext content="Apply discounts will save the quote lines you have added in the table."></lightning-helptext>
+                    <lightning-button class="stretchButton slds-var-m-top_medium slds-var-m-left_x-small slds-var-m-right_x-small" variant="brand" label="Save & Calculate" onclick={handleSaveAndCalculate}></lightning-button>
+                    <lightning-button class="stretchButton slds-var-m-top_medium " variant="brand" label="Save & Exit"  onclick={handleSaveAndExit}></lightning-button>
+                </div>
+                <div class="slds-align_absolute-center slds-var-m-top_x-small">
+                    <h1 class="slds-text-heading_medium">Quote Total: <lightning-formatted-number value={totalValue} format-style="currency" currency-code="USD"></lightning-formatted-number></h1>
+                    <template if:true={totalValueLoading}>
+                        <lightning-dynamic-icon class="slds-var-m-left_x-small" type="eq" option="play" alternative-text="Loading"></lightning-dynamic-icon>                                   
+                    </template>
+                </div>
+            </lightning-layout-item>
+            <div class="slds-m-around_medium">
+                <!-- <lightning-input
+                    label="Quote Id"
+                    value={quoteId}
+                    onchange={handleQuoteId}
+                ></lightning-input>  -->
+                <!-- <lightning-button
+                    label="Fetch Quote"
+                    title="Fetch Quote"
+                    onclick={handleFetch}
+                    
+            ></lightning-button> -->
+                <c-emp-child quote-id={quoteId} onupdatetotal={updateTotal}></c-emp-child>
+            <!-- <ul>
+                <template for:each={quoteLines} for:item="line" for:index="i">
+                    <li key={line.i}>Product is {line.record.SBQQ__ProductName__c}. Number of units: {line.record.SBQQ__Quantity__c}. Price is: {line.record.SBQQ__NetTotal__c}</li>
+                </template>
+            </ul> -->
+            </div>
+        </lightning-layout>
         <!-- <div class="slds-m-around_medium">
             <p>
                 Use the buttons below to subscribe and unsubscribe to a
@@ -27,24 +64,5 @@
                 class="slds-m-left_x-small"
             ></lightning-button>
         </div> -->
-        <div class="slds-m-around_medium">
-            <lightning-input
-                label="Quote Id"
-                value={quoteId}
-                onchange={handleQuoteId}
-            ></lightning-input> 
-            <!-- <lightning-button
-                label="Fetch Quote"
-                title="Fetch Quote"
-                onclick={handleFetch}
-                
-        ></lightning-button> -->
-        <c-emp-child quote-id={quoteId}></c-emp-child>
-        <!-- <ul>
-            <template for:each={quoteLines} for:item="line" for:index="i">
-                <li key={line.i}>Product is {line.record.SBQQ__ProductName__c}. Number of units: {line.record.SBQQ__Quantity__c}. Price is: {line.record.SBQQ__NetTotal__c}</li>
-            </template>
-        </ul> -->
-        </div>
     </lightning-card>
 </template>
