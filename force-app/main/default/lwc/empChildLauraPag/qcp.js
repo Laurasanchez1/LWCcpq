@@ -522,4 +522,38 @@ const onBeforePriceRules = async(quoteModel, ascendPackagingMap, tiers, prodTier
 
 }
 
-export { onBeforePriceRules };
+
+const onBeforePriceRulesBatchable = async(quoteModel, ascendPackagingMap, tiers, prodTiers, uomRecords) =>{
+  
+    const finalQuote = quoteModel;
+    let array = quoteModel.lineItems;
+    let quoteSaver = [];
+    let newLines = [];
+    
+    while (array.length > 0){
+        let newQuote = {
+            record:{
+                End_User__c : quoteModel.record['End_User__c'],
+                SBQQ__Account__c : quoteModel.record['SBQQ__Account__c']
+            }
+        };
+        const batchSize = 100;
+        const linesBatch = array.splice(0, batchSize);
+        newQuote.lineItems = linesBatch;
+        quoteSaver.push(newQuote);
+    }
+   
+
+    const results = await Promise.all(quoteSaver.map(quote => onBeforePriceRules(quote, ascendPackagingMap, tiers, prodTiers, uomRecords)));
+
+    results.forEach(quote =>{
+        newLines = newLines.concat(quote.lineItems);
+    })
+
+    finalQuote.lineItems = newLines;
+    
+    return finalQuote;
+}
+
+
+export { onBeforePriceRules , onBeforePriceRulesBatchable };

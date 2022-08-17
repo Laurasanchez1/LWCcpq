@@ -8,10 +8,13 @@ import queryBlockPrices from '@salesforce/apex/BlockPriceController.queryBlockPr
 import queryAscendPackagingAdder from '@salesforce/apex/AscendPackagingAdderController.queryAscendPackagingAdder';
 import queryUOM from '@salesforce/apex/UomConversionController.queryUOM';
 import queryProductRules from '@salesforce/apex/ProductRuleController.queryProductRules';
-import { onBeforePriceRules } from './qcp';
-import { conditionsCheck } from './utils';
-import hardcodedRules from './productRules';  //not used rn
-import wrapQuoteLine from '@salesforce/apex/ProductRuleController.wrapQuoteLine';
+//OLGA CHANGE HERE
+import queryPriceRules from '@salesforce/apex/PriceRuleController.queryPriceRules';
+//
+import { onBeforePriceRules } from './qcpOlga';
+import { conditionsCheck, priceConditionsCheck, priceActionExecuter } from './utilsOlga';
+//import hardcodedRules from './productRules';  //not used rn
+import wrapQuoteLine from '@salesforce/apex/QuoteController.wrapQuoteLine';   //OLGA ojo change here
 
 import { getObjectInfo } from 'lightning/uiObjectInfoApi';
 import { getPicklistValues } from 'lightning/uiObjectInfoApi';
@@ -22,6 +25,7 @@ import uomDependencyLevel2List from '@salesforce/apex/QuoteController.uomDepende
 
 //APEX METHOD TO SHOW NSP FIELDS IN POP UP
 import NSPAdditionalFields from '@salesforce/apex/QuoteController.NSPAdditionalFields';
+
 
 const columns = [
     { label: 'Name', fieldName: 'Quote_Line_Name__c' }, // References Quote_Line_Name__c in Sandbox
@@ -46,7 +50,7 @@ const columns = [
 
 const nspGroupings = ['ADSS Cable', 'Bus Conductor -Rectangular Bar', 'Bus Conductor -Seamless Bus Pipe', 'Bus Conductor -Universal Angle', 'Loose Tube Cable', 'Premise Cable'];
 
-export default class EmpChild extends NavigationMixin(LightningElement) {
+export default class EmpChildOlga extends NavigationMixin(LightningElement) {
 
     @api quoteId;
     quote;
@@ -58,8 +62,11 @@ export default class EmpChild extends NavigationMixin(LightningElement) {
     pricingTierMap = [];
     ascendPackagingList = [];
     productRules = [];
+    priceRules= [];
     uomRecords = [];
     allowSave = true;
+    linesLength = 0;   //olga for pagination
+    recalculatedLines;  //olga for recalculating just once
 
     connectedCallback(){
         const load = async() => {
@@ -73,20 +80,23 @@ export default class EmpChild extends NavigationMixin(LightningElement) {
             const listBlockProducts = "('" + blockProducts.join("', '") + "')";
             
             // Query SF objects and set state
+            //OLGA ADD PRICE RULE QUERY
             const [ 
                     tiers,
                     prodTiers,
                     blockPrices,
                     ascendPackagingList,
                     uomRecords,
-                    productRules
+                    productRules,
+                    priceRules
                 ] = await Promise.all([
                     queryCT({accountId: this.quote.record['SBQQ__Account__c']}),
                     queryPPT({prodLevel1List: this.quote.lineItems.map(line => line.record['ProdLevel1__c'])}),
                     queryBlockPrices({listProduct: listBlockProducts}),
                     queryAscendPackagingAdder(),
                     queryUOM(),
-                    queryProductRules()
+                    queryProductRules(),
+                    queryPriceRules()
                 ]);
             this.tiers = tiers;
             this.prodTiers = prodTiers;
@@ -94,6 +104,7 @@ export default class EmpChild extends NavigationMixin(LightningElement) {
             this.ascendPackagingList = ascendPackagingList;
             this.productRules = productRules;
             this.uomRecords = uomRecords;
+            this.priceRules = priceRules;
 
             const flatLines = this.quote.lineItems.filter(line => !line.record['SBQQ__ProductOption__c']).map(line => {
                 return {
@@ -105,7 +116,20 @@ export default class EmpChild extends NavigationMixin(LightningElement) {
             return flatLines;
         }
         
-        load().then(flatLines => { this.flatLines = flatLines; this.loading = false; this.updateQuoteTotal(); console.log('Script loaded');});
+        load().then(flatLines => { 
+            this.flatLines = flatLines; 
+            //console.log(flatLines);
+            //olga changed here
+            this.page = 1;
+            this.linesLength = this.flatLines.length;
+            this.totalPage=Math.ceil(this.linesLength / this.pageSize);
+            this.dataPages = this.flatLines.slice(0,this.pageSize);
+            this.endingRecord = this.pageSize;
+            //to here
+            this.loading = false; 
+            this.updateQuoteTotal(); 
+            console.log('Script loaded');
+        });
       
     }
 
@@ -116,24 +140,25 @@ export default class EmpChild extends NavigationMixin(LightningElement) {
     lengthUom;
     
     handleCellChange(event) {
-        // this handler could inform of changes that would not be saved
-    }
-
-    saveValues(event) {
         let lines = this.quote.lineItems;
-        const minQtyLines=[];
+
         // console.log(lines)
         // Inspect changes
+        //console.log(event.detail.draftValues);
         event.detail.draftValues.forEach((row, index) => {
             
             // Obtain row id
-            const rowId = row.id.substring(4);
+            //console.log(row);
+            //const rowId = row.id.substring(4);
+            const rowId = parseInt(row.id.substring(4))+((this.page-1)*this.pageSize);
+            //console.log('Actual rowId ' + rowId);
             const localKey = this.flatLines[rowId].rowId;
-            console.log('local key '+ localKey);
+            //console.log('local key ' + localKey);
+            //console.log('Page ' + this.page);
 
             // Obtain quote lines index
-            const myIndex = lines.findIndex(ql => ql.key === localKey);
-            console.log('my Index ' +myIndex);
+            const myIndex = lines.findIndex(ql => ql.key === localKey); //according to the page displaying
+            //console.log('Index in quoteLines '+myIndex); 
 
             // Obtain list of fields that were changed
             const fieldList = Object.keys(row).filter(field => field !== 'id');
@@ -169,41 +194,43 @@ export default class EmpChild extends NavigationMixin(LightningElement) {
             
             // BUNDLE LOGIC ENDS HERE --------
 
-            //MIN ORDER QTY LOGIC STARTS HERE
-            //console.log("---Min Order Qty ---");
-            if(lines[myIndex].record['SBQQ__Quantity__c'] < parseInt(lines[myIndex].record['Minimum_Order_Qty__c'])){
-                //console.log('quantity is inferior that minimum')
-                minQtyLines.push(parseInt(rowId)+1);  //row Id so the alert index matches the number displayed on datatable
-                lines[myIndex].record['SBQQ__Quantity__c']=lines[myIndex].record['Minimum_Order_Qty__c'];
-            } else {
-                //console.log('quantity ok!')
-            }
+            //MIN ORDER QTY LOGIC STARTS HERE --------
+
+            console.log("---Min Order Qty ---");
+            let minQty = parseInt(lines[myIndex].record['Minimum_Order_Qty__c']);
+            let actualMinQty;
+            minQty != 0 && !isNaN(minQty) ? actualMinQty = minQty : actualMinQty = 1;
+            let minMult = parseInt(lines[myIndex].record['Minimum_Order_Multiple__c']);
+            console.log(actualMinQty, minMult);
+
+            //First check minimum quantity
+            if(lines[myIndex].record['SBQQ__Quantity__c'] < minQty){
+                lines[myIndex].record['SBQQ__Quantity__c'] = actualMinQty;
+                const evt = new ShowToastEvent({
+                    title: 'Warning Fields', 
+                    message: 'The minimum quantity required has not been reached for line: ' + (parseInt(rowId)+1),  //row Id so the alert index matches the number displayed on datatable
+                    variant: 'warning', mode: 'dismissable'
+                });
+                this.dispatchEvent(evt);
+
+            } else if (minMult != 0 && !isNaN(minMult)) {
+                //Then check min multiple
+                if(lines[myIndex].record['SBQQ__Quantity__c'] % minMult != 0){
+                    lines[myIndex].record['SBQQ__Quantity__c'] = actualMinQty;  //Goes back to min qty --> should be correclty set
+                    //display toast here because it runs at the same tame in cell change saving
+                    const evt = new ShowToastEvent({
+                        title: 'Warning Fields', 
+                        message: 'Required multiple not reached: Line '+ (parseInt(rowId)+1) + ' quantity must be multiple of '+ minMult,
+                        variant: 'warning', mode: 'dismissable'
+                    });
+                    this.dispatchEvent(evt);
+                }
+            } 
+            //MIN ORDER QTY LOGIC ENDS HERE  --------
 
         });  //End of for each loop
 
-        if(minQtyLines.length!=0){
-            const evt = new ShowToastEvent({
-                title: 'Warning Fields', 
-                message: 'The minimum quantity required has not been reached for line(s): ' + minQtyLines.join(','),
-                variant: 'warning', mode: 'dismissable'
-            });
-            this.dispatchEvent(evt);
-        }
-        //MIN ORDER QTY LOGIC ENDS HERE
-
         this.regenerateFlatLines(0);
-
-        //In case we want to evaluate product rules here!
-        // if(this.productRules.length !==0){
-        //     //console.log('Product Rules exist');
-        //     this.allowSave = false;
-        //     this.productRuleLookup(this.productRules,this.quote)
-        //     .then(allowSave => {
-        //         this.allowSave = allowSave;
-        //         console.log('allow Save: '+this.allowSave);
-        //     })
-            
-        // }
         
     }
 
@@ -227,6 +254,7 @@ export default class EmpChild extends NavigationMixin(LightningElement) {
         //Allowing to save if no validation product rules prevent it
         if(this.allowSave==true){                                    //needs to be ==true so the event also dispatches here
             console.log('saving...');
+
             // BLOCKPRICES LOGIC STARTS HERE -----------
             for(let line of lines){
                 // Check if block price exists
@@ -250,24 +278,28 @@ export default class EmpChild extends NavigationMixin(LightningElement) {
 
             // execute qcp script
             let startTime = window.performance.now();
-            onBeforePriceRules(this.quote, this.ascendPackagingList, this.tiers, this.prodTiers, this.uomRecords)
-            .then(newQuote => {
+            const newQuote = await onBeforePriceRules(this.quote, this.ascendPackagingList, this.tiers, this.prodTiers, this.uomRecords);
+            //.then(newQuote => {
                 this.quote = newQuote;
                 this.regenerateFlatLines(500);
 
                 let endTime = window.performance.now();
                 console.log(`onBeforePriceRules waited ${endTime - startTime} milliseconds`);
-            });
-        
+            //});
+
+            //OLGA PRICE RULES
+
+            //PRICE RULE LOGIC STARTS HERE --------------------
+            if(this.priceRules.length !==0){
+                const startedPriceRules = window.performance.now();
+                const priceRuleExec = await this.priceRuleLookup(this.priceRules,this.quote);
+                const afterPriceRules = window.performance.now();
+                console.log(`priceRuleConditions waited ${afterPriceRules - startedPriceRules} milliseconds`);
+            }
+            //PRICE RULE LOGIC ENDS HERE --------------------
+
         } else if(this.allowSave == false){
             console.log('No save --> Wait for the rules to evaluate');
-            const evt = new ShowToastEvent({
-                title: 'Product Rule logic executing',
-                message: 'This action is not available at this moment. Please, try again.',
-                variant: 'info', mode: 'dismissable'
-            });
-            this.dispatchEvent(evt);
-
         } else{
             console.log('No save --> Validation rule');
             this.loading=false;
@@ -642,9 +674,34 @@ export default class EmpChild extends NavigationMixin(LightningElement) {
             this.updateQuoteTotal();
             this.flatLines = flatLines;
             this.columns = [...columns];
+            //Olga from here
+            this.page = 1;
+            this.linesLength = this.flatLines.length;
+            //Aca iria el totalRecordCount sera necesario??
+            this.totalPage=Math.ceil(this.linesLength / this.pageSize);
+            this.dataPages = this.flatLines.slice(0,this.pageSize);
+            this.endingRecord = this.pageSize;
+            //olga to here
             this.loading = false;
         }, randDelay);
     }
+
+    //erase this
+    /*
+    //UPDATE PAGE VIEW OF TABLE 
+    updateTable(){
+        this.page = 1;
+        console.log('EVERY TIME YOU UPDATE');
+        //console.log(JSON.stringify(this.quoteLines));
+        this.linesLength = this.flatLines.length;
+        this.totalRecountCount = this.linesLength;  
+        this.totalPage = Math.ceil(this.totalRecountCount / this.pageSize); 
+        this.dataPages = this.quoteLines.slice(0,this.pageSize); 
+        this.endingRecord = this.pageSize;
+        this.quotelinesLength = this.quoteLines.length;
+        //this.firstHandler();
+    }
+    */
 
     // this function updates the net total amount on the parent component
     updateQuoteTotal() {
@@ -690,14 +747,13 @@ export default class EmpChild extends NavigationMixin(LightningElement) {
 
     //Product Rule handling
     async productRuleLookup(productRules, quote){  //The product rules already come sorted by evaluation order from the query
-
+        
         // wrap quote line model records for conversion
         const quoteLines = quote.lineItems.map(line => {
-        const { attributes, ...other } = line.record;
-        return other;
+            const { attributes, ...other } = line.record;
+            return other;
         });
-        //console.log('Quote Lines');
-        //console.log(quoteLines);
+
         // recalculate formula fields
         const data = await wrapQuoteLine({qlJSON: JSON.stringify(quoteLines)});
         //console.log('Called recalc function');
@@ -743,6 +799,40 @@ export default class EmpChild extends NavigationMixin(LightningElement) {
         }
         //console.log('no alert rules here');
         return true;
+    }
+
+    //Price Rule handling
+    async priceRuleLookup(priceRules,quote){
+        //console.log('entered price rule lookup');
+        console.log(priceRules);
+        console.log(quote.lineItems);
+        
+        //Variable to store the lines for which each product rule evaluates
+        let successLines = [];
+
+        //QCP states that to prevent actions to change behavior on future evaluated rules they first evaluate all the price rules conditions 
+        //And then executes actions  --> See "concurrent conditions info on" https://trailhead.salesforce.com/content/learn/modules/price-rules-in-salesforce-cpq/sequence-price-rules-for-correct-calculations
+        
+        //Evaluate all price rules conditions first
+        for(let priceRule of priceRules){
+            //console.log('Individual Price Rule');
+            //console.log(priceRule);
+            const conditionsSuccess = priceConditionsCheck(priceRule['SBQQ__PriceConditions__r'], quote, priceRule['SBQQ__ConditionsMet__c']);
+            successLines.push(conditionsSuccess);
+        }
+        console.log(successLines);
+
+        //Execute all price actions
+        for (let i=0; i < successLines.length; i++){
+            let actionLines= successLines[i];
+            let priceRuleExec = priceRules[i];
+            console.log('Price rule');
+            console.log(priceRuleExec);
+            const actionExec = priceActionExecuter(priceRuleExec['SBQQ__PriceActions__r'], quote, actionLines);
+
+        }
+        
+
     }
 
     //Reorder Lines in Pop up by Product (Quote Line Name Field)
@@ -806,4 +896,43 @@ export default class EmpChild extends NavigationMixin(LightningElement) {
         });
         this.dispatchEvent(evt);
     }
+
+    //OLGA PAGINATION
+
+    //Pagination
+    @track startingRecord = 1;
+    @track endingRecord = 0; 
+    @track page = 1; 
+    @track totalRecountCount = 0;
+    @track dataPages = []; 
+    @track totalPage = 0;
+    @track pageSize = 10; 
+    //PAGINATION CONTROL 
+    previousHandler() {
+        if (this.page > 1) {
+            this.page = this.page - 1; //decrease page by 1
+            this.displayRecordPerPage(this.page);
+        }
+    }
+    nextHandler() {
+        if((this.page<this.totalPage) && this.page !== this.totalPage){
+            this.page = this.page + 1; //increase page by 1
+            this.displayRecordPerPage(this.page);            
+        }             
+    }
+    firstHandler() {
+        this.page = 1; //turn to page 1
+        this.displayRecordPerPage(this.page);                   
+    }
+    lastHandler() {
+        this.page = this.totalPage; //turn to last page 
+        this.displayRecordPerPage(this.page);                   
+    }
+    displayRecordPerPage(page){
+        this.startingRecord = ((page -1) * this.pageSize) ;
+        this.endingRecord = (this.pageSize * page);
+        this.endingRecord = (this.endingRecord > this.linesLength) ? this.linesLength : this.endingRecord; 
+        this.dataPages = this.flatLines.slice(this.startingRecord, this.endingRecord);
+        this.startingRecord = this.startingRecord + 1;
+    }    
 }

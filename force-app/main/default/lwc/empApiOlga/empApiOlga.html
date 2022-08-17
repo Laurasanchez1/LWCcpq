@@ -1,5 +1,5 @@
 <template>
-    <lightning-card title="QLE User Interface" icon-name="cus   m:custom14">
+    <lightning-card title="OLGAAA QLE User Interface" icon-name="cus   m:custom14">
         <!--HEADER START-->
         <div class="slds-border_top slds-border_right slds-border_bottom slds-border_left slds-var-m-left_large slds-var-m-right_large">
             <c-bl_header quote-id={quoteId}></c-bl_header>
@@ -48,7 +48,7 @@
                     onclick={handleFetch}
                     
             ></lightning-button> -->
-                <c-emp-child quote-id={quoteId} onupdatetotal={updateTotal} onrowselected={enableCloneButton} onrowunselected={disableCloneButton}></c-emp-child>
+                <c-emp-child-olga quote-id={quoteId} onupdatetotal={updateTotal} onrowselected={enableCloneButton} onrowunselected={disableCloneButton}></c-emp-child-olga>
             <!-- <ul>
                 <template for:each={quoteLines} for:item="line" for:index="i">
                     <li key={line.i}>Product is {line.record.SBQQ__ProductName__c}. Number of units: {line.record.SBQQ__Quantity__c}. Price is: {line.record.SBQQ__NetTotal__c}</li>

@@ -1,6 +1,6 @@
 import { LightningElement, track } from 'lwc';
 
-export default class EmpApiLWC extends LightningElement {
+export default class EmpApiOlga extends LightningElement {
     channelName = '/event/Test__e';
     quoteId = 'a0q8Z00000CsZBaQAN';
     isSubscribeDisabled = false;
@@ -27,15 +27,15 @@ export default class EmpApiLWC extends LightningElement {
 
     handleSaveAndCalculate(){
         console.log('save and calculate');
-        this.template.querySelector("c-emp-child").calculate();
+        this.template.querySelector("c-emp-child-olga").calculate();
     }
 
     handleSaveAndExit(){
-        this.template.querySelector('c-emp-child').exit();
+        this.template.querySelector('c-emp-child-olga').exit();
     }
 
     handleCloneRows(){
-        this.template.querySelector('c-emp-child').clonerows();
+        this.template.querySelector('c-emp-child-olga').clonerows();
     }
 
     enableCloneButton(){
@@ -74,6 +74,6 @@ export default class EmpApiLWC extends LightningElement {
     }
     handleReorderLines(){
         console.log('Reorder Lines');
-        this.template.querySelector("c-emp-child").reorderLines();
+        this.template.querySelector("c-emp-child-olga").reorderLines();
     }
 }

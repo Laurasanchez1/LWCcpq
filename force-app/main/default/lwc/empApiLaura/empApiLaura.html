@@ -48,7 +48,7 @@
                     onclick={handleFetch}
                     
             ></lightning-button> -->
-                <c-emp-child quote-id={quoteId} onupdatetotal={updateTotal} onrowselected={enableCloneButton} onrowunselected={disableCloneButton}></c-emp-child>
+                <c-emp-child-laura quote-id={quoteId} onupdatetotal={updateTotal} onrowselected={enableCloneButton} onrowunselected={disableCloneButton}></c-emp-child-laura>
             <!-- <ul>
                 <template for:each={quoteLines} for:item="line" for:index="i">
                     <li key={line.i}>Product is {line.record.SBQQ__ProductName__c}. Number of units: {line.record.SBQQ__Quantity__c}. Price is: {line.record.SBQQ__NetTotal__c}</li>

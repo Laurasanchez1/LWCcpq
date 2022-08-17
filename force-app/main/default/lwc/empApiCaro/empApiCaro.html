@@ -35,25 +35,14 @@
                 </div>
             </lightning-layout-item>
             <!--SAVE & DISCOUNT  BUTTONS END-->
-            
+            <!--TAB SET SECTION START-->
+            <div class="slds-border_right slds-border_bottom slds-border_left slds-var-m-left_large slds-var-m-right_large">
+                <c-emp-child-caro quote-id={quoteId} onupdatetotal={updateTotal} onrowselected={enableCloneButton} 
+                onrowunselected={disableCloneButton} onreorderinactive={deactivateReorderButton}  onreorderactive={activateReorderButton}></c-emp-child-caro>
+            </div>
+        <!--TAB SET SECTION END-->
             <div class="slds-m-around_medium">
-                <!-- <lightning-input
-                    label="Quote Id"
-                    value={quoteId}
-                    onchange={handleQuoteId}
-                ></lightning-input>  -->
-                <!-- <lightning-button
-                    label="Fetch Quote"
-                    title="Fetch Quote"
-                    onclick={handleFetch}
-                    
-            ></lightning-button> -->
-                <c-emp-child quote-id={quoteId} onupdatetotal={updateTotal} onrowselected={enableCloneButton} onrowunselected={disableCloneButton}></c-emp-child>
-            <!-- <ul>
-                <template for:each={quoteLines} for:item="line" for:index="i">
-                    <li key={line.i}>Product is {line.record.SBQQ__ProductName__c}. Number of units: {line.record.SBQQ__Quantity__c}. Price is: {line.record.SBQQ__NetTotal__c}</li>
-                </template>
-            </ul> -->
+
             </div>
         </lightning-layout>
         <!-- <div class="slds-m-around_medium">

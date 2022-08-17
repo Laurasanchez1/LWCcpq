@@ -1,8 +1,21 @@
 <template>
     <lightning-spinner if:true={loading} alternative-text="Loading" size="medium"></lightning-spinner>
+    <!--PAGINATION CONTROL START-->
+    <div>
+        <p class="slds-align_absolute-center"><b> Quote lines: {linesLength} </b></p>
+        <p class="slds-align_absolute-center"><b> Page {page} of {totalPage} </b></p>
+        <lightning-button-group class="slds-align_absolute-center">
+            <lightning-button label="First" icon-name="utility:chevronleft" onclick={firstHandler} class="stretchButton"></lightning-button>
+            <lightning-button label="Previous" icon-name="utility:chevronleft" onclick={previousHandler} class="stretchButton"></lightning-button>
+            <lightning-button label="Next" icon-name="utility:chevronright" icon-position="right" onclick={nextHandler} class="stretchButton"></lightning-button>
+            <lightning-button label="Last" icon-name="utility:chevronright" icon-position="right" onclick={lastHandler} class="stretchButton"></lightning-button>
+        </lightning-button-group>
+    </div>
+    <!--PAGINATION CONTROL END-->
+    <!--DATATABLE START-->
     <lightning-datatable
         key-field="id"
-        data={flatLines}
+        data={dataPages}
         columns={columns}
         onsave={saveValues}
         oncellchange={handleCellChange}

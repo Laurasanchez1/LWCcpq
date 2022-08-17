@@ -8,7 +8,7 @@ import queryBlockPrices from '@salesforce/apex/BlockPriceController.queryBlockPr
 import queryAscendPackagingAdder from '@salesforce/apex/AscendPackagingAdderController.queryAscendPackagingAdder';
 import queryUOM from '@salesforce/apex/UomConversionController.queryUOM';
 import queryProductRules from '@salesforce/apex/ProductRuleController.queryProductRules';
-import { onBeforePriceRules } from './qcp';
+import { onBeforePriceRules, onBeforePriceRulesBatchable } from './qcp';
 import { conditionsCheck } from './utils';
 import hardcodedRules from './productRules';  //not used rn
 import wrapQuoteLine from '@salesforce/apex/ProductRuleController.wrapQuoteLine';
@@ -60,6 +60,7 @@ export default class EmpChild extends NavigationMixin(LightningElement) {
     productRules = [];
     uomRecords = [];
     allowSave = true;
+    
 
     connectedCallback(){
         const load = async() => {
@@ -94,6 +95,8 @@ export default class EmpChild extends NavigationMixin(LightningElement) {
             this.ascendPackagingList = ascendPackagingList;
             this.productRules = productRules;
             this.uomRecords = uomRecords;
+            
+           console.log(this.quote)
 
             const flatLines = this.quote.lineItems.filter(line => !line.record['SBQQ__ProductOption__c']).map(line => {
                 return {
@@ -248,16 +251,30 @@ export default class EmpChild extends NavigationMixin(LightningElement) {
             
             this.quote.lineItems = lines;
 
-            // execute qcp script
-            let startTime = window.performance.now();
-            onBeforePriceRules(this.quote, this.ascendPackagingList, this.tiers, this.prodTiers, this.uomRecords)
-            .then(newQuote => {
-                this.quote = newQuote;
-                this.regenerateFlatLines(500);
+            if (this.quote.lineItems.length <= 100){
+                let startTime = window.performance.now();
+                onBeforePriceRules(this.quote, this.ascendPackagingList, this.tiers, this.prodTiers, this.uomRecords)
+                .then(newQuote => {
+                    this.quote = newQuote;
+                    this.regenerateFlatLines(500);
+    
+                    let endTime = window.performance.now();
+                    console.log(`onBeforePriceRules waited ${endTime - startTime} milliseconds`);
+                });
+            }else{
+                console.log('----------onBeforePriceRulesBatchable test---------------')
+                let startTimeBatchable = window.performance.now();
+                onBeforePriceRulesBatchable(this.quote, this.ascendPackagingList, this.tiers, this.prodTiers, this.uomRecords)
+                .then(newQuote => {
+                    this.quote = newQuote;
+                    this.regenerateFlatLines(500);
+    
+                    let endTimeBatchable = window.performance.now();
+                    console.log(`onBeforePriceRulesBatchable waited ${endTimeBatchable - startTimeBatchable} milliseconds`);
+                });
+    
+            }
 
-                let endTime = window.performance.now();
-                console.log(`onBeforePriceRules waited ${endTime - startTime} milliseconds`);
-            });
         
         } else if(this.allowSave == false){
             console.log('No save --> Wait for the rules to evaluate');
@@ -691,6 +708,8 @@ export default class EmpChild extends NavigationMixin(LightningElement) {
     //Product Rule handling
     async productRuleLookup(productRules, quote){  //The product rules already come sorted by evaluation order from the query
 
+        let data = []
+
         // wrap quote line model records for conversion
         const quoteLines = quote.lineItems.map(line => {
         const { attributes, ...other } = line.record;
@@ -699,14 +718,40 @@ export default class EmpChild extends NavigationMixin(LightningElement) {
         //console.log('Quote Lines');
         //console.log(quoteLines);
         // recalculate formula fields
-        const data = await wrapQuoteLine({qlJSON: JSON.stringify(quoteLines)});
-        //console.log('Called recalc function');
+
+        if (quoteLines.length <= 100){
+            let startTime = window.performance.now();
+            data = await wrapQuoteLine({qlJSON: JSON.stringify(quoteLines)});
+            let endTime = window.performance.now();
+            console.log(`wrapQuoteLine waited ${endTime - startTime} milliseconds`);
+        }else{
+          
+            let linesSaver = [];
+            let results = [];
+            
+            while (quoteLines.length > 0){
+                const batchSize = 100;
+                const linesBatch = quoteLines.splice(0, batchSize);
+                linesSaver.push(linesBatch);
+            }
+
+            let startTime = window.performance.now();
+            results = await Promise.all(linesSaver.map(lines => wrapQuoteLine({qlJSON: JSON.stringify(lines)})));
+            let endTime = window.performance.now();
+            console.log(`wrapQuoteLine with batches waited ${endTime - startTime} milliseconds`);
+
+            results.forEach(line =>{
+                // console.log(line)
+                data = data.concat(line);
+            })
+        }
+
         const evaluateQuoteLines=data;
-        //console.log(evaluateQuoteLines);
+        // console.log(evaluateQuoteLines);
 
         //Validation Rules
         const valRules= productRules.filter(rule=> rule['SBQQ__Type__c']=='Validation');
-        //console.log(valRules)
+        // console.log(valRules)
         if(valRules.length !==0){
             for(let valRule of valRules){const triggerRule = conditionsCheck(valRule['SBQQ__ErrorConditions__r'],quote,valRule['SBQQ__ConditionsMet__c'], evaluateQuoteLines);
                 if(triggerRule!==-1){
@@ -717,6 +762,7 @@ export default class EmpChild extends NavigationMixin(LightningElement) {
                     });
                     this.dispatchEvent(evt);
                     //return the event to dispatch it when clicking save & calculate! 
+                    // console.log(evt)
                     return evt;     
                 }
             };
@@ -744,6 +790,10 @@ export default class EmpChild extends NavigationMixin(LightningElement) {
         //console.log('no alert rules here');
         return true;
     }
+
+    
+
+  
 
     //Reorder Lines in Pop up by Product (Quote Line Name Field)
     @track dragStart;
@@ -806,4 +856,6 @@ export default class EmpChild extends NavigationMixin(LightningElement) {
         });
         this.dispatchEvent(evt);
     }
+
+
 }
