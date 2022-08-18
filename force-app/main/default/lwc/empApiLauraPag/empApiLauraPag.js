@@ -2,7 +2,7 @@ import { LightningElement, track } from 'lwc';
 
 export default class EmpApiLauraPag extends LightningElement {
     channelName = '/event/Test__e';
-    quoteId = 'a0q8Z00000CsqYPQAZ'; //  a0q8Z00000CsZBaQAN
+    quoteId = 'a0q8Z00000CsYV2QAN'; //  a0q8Z00000CsZBaQAN
     isSubscribeDisabled = false;
     isUnsubscribeDisabled = !this.isSubscribeDisabled;
     totalValue;

@@ -19,4 +19,9 @@ public class QuoteModel {
     public Decimal netTotal {get; set;}
     @AuraEnabled
     public Decimal netNonSegmentTotal {get; set;}
+
+
+    public QuoteLineModel[] getLineItems() {
+		return this.lineItems;
+	}
 }

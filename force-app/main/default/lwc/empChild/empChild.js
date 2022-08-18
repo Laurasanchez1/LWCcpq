@@ -2,29 +2,30 @@ import { LightningElement, api, track, wire } from 'lwc';
 import { NavigationMixin } from 'lightning/navigation';
 import read from '@salesforce/apex/myQuoteExample.read';
 import save from '@salesforce/apex/myQuoteCalculator.save';
-import queryCT from '@salesforce/apex/CustomerTierController.queryCT';
-import queryPPT from '@salesforce/apex/ProductPricingTierController.queryPPT';
-import queryBlockPrices from '@salesforce/apex/BlockPriceController.queryBlockPrices';
-import queryAscendPackagingAdder from '@salesforce/apex/AscendPackagingAdderController.queryAscendPackagingAdder';
-import queryUOM from '@salesforce/apex/UomConversionController.queryUOM';
-import queryProductRules from '@salesforce/apex/ProductRuleController.queryProductRules';
+
 import { onBeforePriceRules } from './qcp';
-import { conditionsCheck } from './utils';
+import { build, conditionsCheck } from './utils';
 import hardcodedRules from './productRules';  //not used rn
 import wrapQuoteLine from '@salesforce/apex/ProductRuleController.wrapQuoteLine';
+import searchAgreement from '@salesforce/apex/SearchAgreementLookupController.search';
+import discountPrinter from '@salesforce/apex/DiscountController.discountPrinter';
+import tiersByScheduleId from '@salesforce/apex/DiscountController.tiersByScheduleId';
 
 import { getObjectInfo } from 'lightning/uiObjectInfoApi';
 import { getPicklistValues } from 'lightning/uiObjectInfoApi';
 import { ShowToastEvent } from 'lightning/platformShowToastEvent';
 import QUOTELINE_OBJECT from '@salesforce/schema/SBQQ__QuoteLine__c';
 import LENGTH_UOM_FIELD from '@salesforce/schema/SBQQ__QuoteLine__c.Length_UOM__c';
+import TIER_FIELD from '@salesforce/schema/SBQQ__QuoteLine__c.Tier__c';
+import OVERRIDE_LEAD_TIME_FIELD from '@salesforce/schema/SBQQ__QuoteLine__c.Override_Quoted_Lead_Time__c';
+import OVERRIDE_REASON from '@salesforce/schema/SBQQ__QuoteLine__c.Override_Reason__c';
 import uomDependencyLevel2List from '@salesforce/apex/QuoteController.uomDependencyLevel2List';
 
 //APEX METHOD TO SHOW NSP FIELDS IN POP UP
 import NSPAdditionalFields from '@salesforce/apex/QuoteController.NSPAdditionalFields';
 
 const columns = [
-    { label: 'Name', fieldName: 'Quote_Line_Name__c' }, // References Quote_Line_Name__c in Sandbox
+    { label: 'Name', fieldName: 'Quote_Line_Name__c' },
     { label: 'Description', fieldName: 'SBQQ__Description__c' },
     { label: 'Quantity', fieldName: 'SBQQ__Quantity__c', type: 'number', editable: true },
     { label: 'UOM', sortable: true, fieldName: 'UOM__c' , type: "button",
@@ -44,6 +45,12 @@ const columns = [
     // replace
 ];
 
+const discountTierColumns = [
+    {label: 'Lower Bound', fieldName: 'SBQQ__LowerBound__c',  type: 'number'},
+    {label: 'Upper Bound', fieldName: 'SBQQ__UpperBound__c' , type: 'number'},
+    {label: 'Price',fieldName: 'SBQQ__Price__c' , type: 'currency'},
+];
+
 const nspGroupings = ['ADSS Cable', 'Bus Conductor -Rectangular Bar', 'Bus Conductor -Seamless Bus Pipe', 'Bus Conductor -Universal Angle', 'Loose Tube Cable', 'Premise Cable'];
 
 export default class EmpChild extends NavigationMixin(LightningElement) {
@@ -59,6 +66,7 @@ export default class EmpChild extends NavigationMixin(LightningElement) {
     ascendPackagingList = [];
     productRules = [];
     uomRecords = [];
+    contracts = [];
     allowSave = true;
 
     connectedCallback(){
@@ -66,34 +74,17 @@ export default class EmpChild extends NavigationMixin(LightningElement) {
             const quote = await read({quoteId: this.quoteId});
             this.quote = JSON.parse(quote);
 
-            // Get array of Products with Block Pricing
-            const blockProducts = this.quote.lineItems
-                .filter(line => line.record['SBQQ__BlockPrice__c'])
-                .map(line => line.record['SBQQ__Product__c']);
-            const listBlockProducts = "('" + blockProducts.join("', '") + "')";
-            
-            // Query SF objects and set state
-            const [ 
-                    tiers,
-                    prodTiers,
-                    blockPrices,
-                    ascendPackagingList,
-                    uomRecords,
-                    productRules
-                ] = await Promise.all([
-                    queryCT({accountId: this.quote.record['SBQQ__Account__c']}),
-                    queryPPT({prodLevel1List: this.quote.lineItems.map(line => line.record['ProdLevel1__c'])}),
-                    queryBlockPrices({listProduct: listBlockProducts}),
-                    queryAscendPackagingAdder(),
-                    queryUOM(),
-                    queryProductRules()
-                ]);
-            this.tiers = tiers;
-            this.prodTiers = prodTiers;
-            this.blockPrices = blockPrices;
-            this.ascendPackagingList = ascendPackagingList;
-            this.productRules = productRules;
-            this.uomRecords = uomRecords;
+            // Build state of the app
+            const payload = await build(this.quote);
+            console.log(payload);
+            this.contracts = payload.contracts;
+            this.schedules = payload.schedules;
+            this.tiers = payload.customerTiers;
+            this.prodTiers = payload.prodTiers;
+            this.blockPrices = payload.blockPrices;
+            this.ascendPackagingList = payload.ascendPackagingList;
+            this.productRules = payload.productRules;
+            this.uomRecords = payload.uomRecords;
 
             const flatLines = this.quote.lineItems.filter(line => !line.record['SBQQ__ProductOption__c']).map(line => {
                 return {
@@ -110,30 +101,32 @@ export default class EmpChild extends NavigationMixin(LightningElement) {
     }
 
     //GETTING PICKLIST VALUES IN UOM/LENGTH UOM/ DEPENDENT ON LEVEL 2
+    //CUSTOMER TIERS/QUOTED LEAD TIMES/OVERRIDE REASONS
     @wire(getObjectInfo, { objectApiName: QUOTELINE_OBJECT })
     objectInfo;
     @wire(getPicklistValues, { recordTypeId: '$objectInfo.data.defaultRecordTypeId', fieldApiName: LENGTH_UOM_FIELD})
     lengthUom;
-    
-    handleCellChange(event) {
-        // this handler could inform of changes that would not be saved
-    }
+    @wire(getPicklistValues, { recordTypeId: '$objectInfo.data.defaultRecordTypeId', fieldApiName: TIER_FIELD})
+    customerTiers;
+    @wire(getPicklistValues, { recordTypeId: '$objectInfo.data.defaultRecordTypeId', fieldApiName: OVERRIDE_LEAD_TIME_FIELD})
+    quotedLeadTimes;
+    @wire(getPicklistValues,{ recordTypeId: '$objectInfo.data.defaultRecordTypeId', fieldApiName: OVERRIDE_REASON})
+    overrideReasonsList;
 
-    saveValues(event) {
+    handleCellChange(event) {
         let lines = this.quote.lineItems;
         const minQtyLines=[];
         // console.log(lines)
         // Inspect changes
+        console.log(event.detail.draftValues);
         event.detail.draftValues.forEach((row, index) => {
             
             // Obtain row id
             const rowId = row.id.substring(4);
             const localKey = this.flatLines[rowId].rowId;
-            console.log('local key '+ localKey);
 
             // Obtain quote lines index
             const myIndex = lines.findIndex(ql => ql.key === localKey);
-            console.log('my Index ' +myIndex);
 
             // Obtain list of fields that were changed
             const fieldList = Object.keys(row).filter(field => field !== 'id');
@@ -250,7 +243,7 @@ export default class EmpChild extends NavigationMixin(LightningElement) {
 
             // execute qcp script
             let startTime = window.performance.now();
-            onBeforePriceRules(this.quote, this.ascendPackagingList, this.tiers, this.prodTiers, this.uomRecords)
+            onBeforePriceRules(this.quote, this.ascendPackagingList, this.tiers, this.prodTiers, this.uomRecords, this.schedules)
             .then(newQuote => {
                 this.quote = newQuote;
                 this.regenerateFlatLines(500);
@@ -362,6 +355,7 @@ export default class EmpChild extends NavigationMixin(LightningElement) {
     isLengthUomModalOpen = false;
     isUomModalOpen = false;
     nspShowMessage = false;
+    isOverridesModalOpen = false;
     handleRowAction(event) {
         this.dataRow = event.detail.row;
         switch(event.detail.action.name){
@@ -385,6 +379,11 @@ export default class EmpChild extends NavigationMixin(LightningElement) {
                     this.showNSP = true;
                     this.nspShowMessage = false;
                 }
+                break;
+
+            case 'Tiers':
+                this.loadOverridesModal();
+                this.isOverridesModalOpen = true;
                 break;
             default:
             alert('There is an error trying to complete this action');    
@@ -457,7 +456,7 @@ export default class EmpChild extends NavigationMixin(LightningElement) {
                 variant: 'warning', mode: 'dismissable'
             });
             this.dispatchEvent(evt);
-            this.closeUomPopup();
+            this.closeUomModal();
         }
     }
 
@@ -672,8 +671,7 @@ export default class EmpChild extends NavigationMixin(LightningElement) {
                 line.record['Approval_Reasons__c'] = 'Price Override Approval Required';
                 console.log("Successfully overrided price");
                 console.log("----Line record After Override----");
-                console.log(line.record.SBQQ__ProductName__c);
-                console.log(line.record.Quote_Line_Name__c);
+                console.log(line.record.SBQQ__ProductName__c)
                 console.log(line.record)
 
             } else {
@@ -806,4 +804,361 @@ export default class EmpChild extends NavigationMixin(LightningElement) {
         });
         this.dispatchEvent(evt);
     }
+
+    // OVERRIDES CLASS
+    overrideReason = '';
+    overrideComment = '';
+    isOverrideReason = false;
+    isBpDisabled = false;
+    isSaDisabled = false;
+    isCtDisabled = false;
+    isBpChecked = false;
+    isSaChecked = false;
+    isCtChecked = false;
+    agreementSearchTerm;
+    searchTermTier;
+    boxClass = 'slds-combobox slds-dropdown-trigger slds-dropdown-trigger_click slds-has-focus';
+    inputClass = 'slds-align_absolute-center';
+    agreementRecords;
+    discountScheduleUom;
+    agreementName;
+    discountTiers = [];
+    @track discountTierColumns = discountTierColumns;
+    noTiersFound = true;
+    showTiersList = false;
+    _overrideQuotedLeadTime;
+    _overrideCustomerTier;
+    _overrideBasePrice;
+    previousOverrideState = {};
+    @track loadingOverrides = false;
+
+    showOverrideReason(){
+        // this.wasReset = false;
+        this.isOverrideReason = true; 
+        this.overrideReason = '';
+    }
+
+    showAgreements(){
+        this.searchTermTier = '';
+        this.boxClass = 'slds-combobox slds-dropdown-trigger slds-dropdown-trigger_click slds-has-focus slds-is-open';
+        this.inputClass = 'slds-align_absolute-center slds-has-focus';
+    }
+
+    loadOverridesModal(){
+
+        this.loadingOverrides = true;
+        
+        this.resetModalState();
+        
+        let index = this.quote.lineItems.findIndex(ql => ql.key === this.dataRow.rowId);
+
+        if(this.quote.lineItems[index].record['Override_Quoted_Lead_Time__c']){
+            this._overrideQuotedLeadTime = this.quote.lineItems[index].record['Override_Quoted_Lead_Time__c'];
+        }
+
+        // if new customer tier has been written, lock the other two
+        if(this.quote.lineItems[index].record['New_Customer_Tier__c']){
+            this._overrideCustomerTier = this.quote.lineItems[index].record['New_Customer_Tier__c'];
+            this.isCtChecked = true;
+            this.isBpDisabled = true;
+            this.isSaDisabled = true;
+        }
+
+        // if new base price has been written, lock the other two
+        if(this.quote.lineItems[index].record['Base_Price_Override__c']){
+            this._overrideBasePrice = this.quote.lineItems[index].record['Base_Price_Override__c'];
+            this.isBpChecked = true;
+            this.isSaDisabled = true;
+            this.isCtDisabled = true;
+        }
+
+        // if new discount schedule has been written, lock the other two
+        if(this.quote.lineItems[index].record['New_Discount_Schedule__c']){
+            tiersByScheduleId({scheduleId: this.quote.lineItems[index].record['New_Discount_Schedule__c']})
+            .then( data => {
+                if(data.length > 0){
+                    this._overrideAgreement = data[0]['SBQQ__Schedule__c']; // _overrideAgreement is set to the discount schedule Id not the contract Id
+                    this.isBpDisabled = true; 
+                    this.isCtDisabled= true;
+                    this.isSaChecked= true;
+                    data[0].UOM__c != undefined ? this.discountScheduleUom = data[0].UOM__c 
+                    :  this.discountScheduleUom = '';
+                    data[0].Agreement__c != undefined ? this.agreementName = data[0].Agreement__c 
+                    :  this.agreementName = '';
+                    this.noTiersFound = false;
+                }
+                else {
+                    this.discountScheduleUom = '';
+                    this.agreementName = selectedName;
+                    this.noTiersFound = true;
+                }
+
+                this.discountTiers = data;
+                this.discountTierColumns = [...this.discountTierColumns];
+                this.showTiersList = true;
+                this.loadingOverrides = false;
+            })
+            .catch(error => {
+                console.log(error);
+            });
+        } else {
+            this.loadingOverrides = false;
+        }
+    }
+
+    resetOverrides(){
+
+        this.resetModalState();
+
+        let index = this.quote.lineItems.findIndex(ql => ql.key === this.dataRow.rowId);
+
+        const {record, ...other} = this.quote.lineItems[index];
+
+        record['Override_Quoted_Lead_Time__c'] = null;
+        record['New_Customer_Tier__c'] = null;
+        record['Base_Price_Override__c'] = null;
+        record['New_Discount_Schedule__c'] = null;
+
+        this.showTiersList = false;
+
+        console.log(this.quote.lineItems[index]);
+    }
+
+    resetModalState(){
+        this.isBpChecked = false;
+        this.isSaChecked = false;
+        this.isCtChecked = false;                
+        this.isBpDisabled = false;
+        this.isSaDisabled = false;
+        this.isCtDisabled = false;
+        this.isOverrideReason = false;
+        this._overrideQuotedLeadTime = null;
+        this._overrideCustomerTier = null;
+        this._overrideBasePrice = null;
+        this._overrideAgreement = null;
+        this.discountTiers = [];
+        this.agreementSearchTerm = '';
+    }
+
+    debounceInterval = 300;
+    typingTimer;
+    handleLookupChange(event) {
+        if(event.target.value.length < 3){
+            this.onLookupBlur();
+            return;
+        }
+        clearTimeout(this.typingTimer);
+        this.searchTermTier = event.target.value;
+        if(!this.quote.record['SBQQ__Account__c']){
+            const evt = new ShowToastEvent({
+                title: 'No Account Available',
+                message: 'This quote has no associated account',
+                variant: 'error',
+                mode: 'dismissable'
+            });
+            this.dispatchEvent(evt);
+        } else {
+            this.typingTimer = setTimeout(() => {
+                searchAgreement({accId : this.quote.record['SBQQ__Account__c'], searchTerm: this.searchTermTier})
+                .then( data => {
+                    this.agreementRecords = data;
+                    if (this.agreementRecords.length == 0){
+                        this.agreementRecords = [{"Id":"norecords","Agreement_Name__c":"NO Agreements","UOM__c":"NO UOM"}];
+                    }
+                    this.showAgreements(); 
+                })
+                .catch( error => {
+                    const evt = new ShowToastEvent({
+                        title: 'No agreements found',
+                        message: 'The quote has no associated agreements',
+                        variant: 'warning',
+                        mode: 'dismissable'
+                    });
+                    this.dispatchEvent(evt);
+                });
+            }, this.debounceInterval);   
+        } 
+    }
+
+    blurTimeout;
+    onLookupBlur() {
+        this.blurTimeout = setTimeout(() => {
+            this.boxClass = 'slds-combobox slds-dropdown-trigger slds-dropdown-trigger_click slds-has-focus'
+        }, 300);
+    }
+
+    closeOverridesModal(){
+        this.isOverridesModalOpen = false;
+        this.showTiersList = false;
+    }
+
+    setOverrideLeadTime(event){
+        this._overrideQuotedLeadTime = event.target.value;
+        this.showOverrideReason();
+    }
+
+    setOverrideReason(event){
+        this.overrideReason = event.target.value; 
+        // this.wasReset = false;
+     }
+ 
+    setOverrideComment(event){
+        this.overrideComment = event.target.value;
+        // this.wasReset = false;
+     }
+
+    setOverrideType(event){
+        if(event.target.label == 'Tier'){
+            if(event.target.checked){
+                this.isBpDisabled = true;
+                this.isSaDisabled = true;
+                this.isBpChecked= false; 
+                this.isSaChecked = false; 
+                this.isCtChecked = true;
+            } else {
+                this.isCtChecked = true;
+                this.template.querySelector("[id*='tiercheckbox']").checked = this.isCtChecked;
+                const evt = new ShowToastEvent({
+                    title: 'Reset Override Price.',
+                    message: 'Please, reset prices if you want to change the Override Type.',
+                    variant: 'info', mode: 'dismissible ' });
+                this.dispatchEvent(evt);
+            }
+        } else if (event.target.label == 'Price'){
+            if(event.target.checked){
+                this.isCtDisabled = true;
+                this.isSaDisabled = true;
+                this.isCtChecked= false;
+                this.isSaChecked = false;
+                this.isBpChecked = true;
+            } else {
+                this.isBpChecked = true;
+                this.template.querySelector("[id*='pricecheckbox']").checked = this.isBpChecked;
+                const evt = new ShowToastEvent({
+                    title: 'Reset Override Price.',
+                    message: 'Please, reset prices if you want to change the Override Type.',
+                    variant: 'info', mode: 'dismissible ' });
+                this.dispatchEvent(evt);
+            }
+            
+        } else if (event.target.label == 'Sales Agreement'){
+            if(event.target.checked){
+                this.isCtDisabled = true;
+                this.isBpDisabled = true;
+                this.isCtChecked= false;
+                this.isBpChecked= false; 
+                this.isSaChecked = true;
+            } else {
+                this.isSaChecked = true;
+                this.template.querySelector("[id*='agreementcheckbox']").checked = this.isSaChecked;
+                const evt = new ShowToastEvent({
+                    title: 'Reset Override Price.',
+                    message: 'Please, reset prices if you want to change the Override Type.',
+                    variant: 'info', mode: 'dismissible ' });
+                this.dispatchEvent(evt);
+            }
+        } 
+    }
+
+    setOverrideCustomerTier(event){
+        this._overrideCustomerTier = event.target.value; 
+        this.isBpDisabled = true; 
+        this.isSaDisabled = true; 
+        this.isBpChecked= false; 
+        this.isSaChecked = false; 
+        this.isCtChecked = true; 
+        this.showOverrideReason();
+    }
+
+    setOverrideBasePrice(event){
+        this._overrideBasePrice = event.target.value; 
+        this.isCtDisabled= true;
+        this.isSaDisabled = true;          
+        this.isCtChecked= false;
+        this.isSaChecked = false; 
+        this.isBpChecked= true;
+        this.showOverrideReason();
+    }
+
+    setOverrideAgreement(event) {
+        let selectedId = event.currentTarget.dataset.id;
+        let selectedName = event.currentTarget.dataset.name;
+        this.agreementSearchTerm = selectedName;
+        this.template.querySelectorAll("[id*='inputAgreement']").forEach(each => { each.value = undefined; });
+        discountPrinter({ agreementId: selectedId, prodId: this.dataRow['SBQQ__Product__c'] })
+        .then( data => {
+            if(data.length > 0){
+                this._overrideAgreement = data[0]['SBQQ__Schedule__c']; // _overrideAgreement is set to the discount schedule Id not the contract Id
+                this.showOverrideReason();
+                this.isBpDisabled = true; 
+                this.isCtDisabled= true;
+                this.isCtChecked= false;
+                this.isBpChecked= false; 
+                this.isSaChecked = true;
+                data[0].UOM__c != undefined ? this.discountScheduleUom = data[0].UOM__c 
+                :  this.discountScheduleUom = '';
+                data[0].Agreement__c != undefined ? this.agreementName = data[0].Agreement__c 
+                :  this.agreementName = '';
+                this.noTiersFound = false;
+            } else {
+                this.discountScheduleUom = '';
+                this.agreementName = selectedName;
+                this.noTiersFound = true;
+            }
+            
+            this.discountTiers = data;
+            this.discountTierColumns = [...this.discountTierColumns];
+            this.showTiersList = true;
+        })
+        .catch( error => {
+            console.log(error);
+        })
+            
+        if(this.blurTimeout) {
+            clearTimeout(this.blurTimeout);
+        }
+            
+        this.boxClass = 'slds-combobox slds-dropdown-trigger slds-dropdown-trigger_click slds-has-focus';
+    }
+
+    setOverrideValues(){
+        // if(!this.wasReset){
+            if (this.overrideReason == '' && this.isOverrideReason){
+                const evt = new ShowToastEvent({
+                    title: 'Required Override Reason before changing',
+                    message: 'The Override Reason field should be selected before closing the pop-up',
+                    variant: 'error', mode: 'sticky' });
+                this.dispatchEvent(evt);
+            } else {
+                
+                try{
+                let index = this.quote.lineItems.findIndex(ql => ql.key === this.dataRow.rowId);
+                
+                if(this._overrideQuotedLeadTime){
+                    this.quote.lineItems[index].record['Override_Quoted_Lead_Time__c'] = this._overrideQuotedLeadTime;
+                }
+
+                if(this._overrideCustomerTier && this._overrideCustomerTier != this.quote.lineItems[index].record['New_Customer_Tier__c']){
+                    this.quote.lineItems[index].record['Last_Customer_Tier__c'] = this.quote.lineItems[index].record['New_Customer_Tier__c'];
+                    this.quote.lineItems[index].record['New_Customer_Tier__c'] = this._overrideCustomerTier;
+                }
+
+                if(this._overrideBasePrice){
+                    this.quote.lineItems[index].record['Base_Price_Override__c'] = this._overrideBasePrice;
+                }
+
+                if(this._overrideAgreement && this._overrideAgreement != this.quote.lineItems[index].record['New_Discount_Schedule__c'] && this.discountTiers.length > 0){
+                    this.quote.lineItems[index].record['Last_Discount_Schedule__c'] = this.quote.lineItems[index].record['New_Discount_Schedule__c'];
+                    this.quote.lineItems[index].record['New_Discount_Schedule__c'] = this._overrideAgreement;
+                }
+
+                }catch(error){console.log(error)}
+
+                console.log(this.quote.lineItems);
+                this.closeOverridesModal();
+            }
+
+        // }
+    }
+    
 }

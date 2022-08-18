@@ -8,6 +8,7 @@ import queryBlockPrices from '@salesforce/apex/BlockPriceController.queryBlockPr
 import queryAscendPackagingAdder from '@salesforce/apex/AscendPackagingAdderController.queryAscendPackagingAdder';
 import queryUOM from '@salesforce/apex/UomConversionController.queryUOM';
 import queryProductRules from '@salesforce/apex/ProductRuleController.queryProductRules';
+import deleteQuoteLines from '@salesforce/apex/QuoteController.deleteQuoteLines';
 import { onBeforePriceRules, onBeforePriceRulesBatchable } from './qcp';
 import { conditionsCheck } from './utils';
 import hardcodedRules from './productRules';  //not used rn
@@ -111,6 +112,8 @@ export default class EmpChildLauraPag extends NavigationMixin(LightningElement) 
             this.ascendPackagingList = ascendPackagingList;
             this.productRules = productRules;
             this.uomRecords = uomRecords;
+
+            console.log(this.quote.lineItems)
 
             const flatLines = this.quote.lineItems.filter(line => !line.record['SBQQ__ProductOption__c']).map(line => {
                 return {
@@ -250,9 +253,15 @@ export default class EmpChildLauraPag extends NavigationMixin(LightningElement) 
             
             // Obtain row id
             const rowId = parseInt(row.id.substring(4))+((page-1)*this.pageSize); //row.id.substring(4); //((this.page-1)*this.pageSize)
+            console.log('row id');
+            console.log(row.id);
             const localKey = this.flatLines[rowId].rowId;
+            console.log('local key');
+            console.log(localKey)
             // Obtain quote lines index
             const myIndex = lines.findIndex(ql => ql.key === localKey);
+            console.log('my index')
+            console.log(myIndex)
 
             // Obtain list of fields that were changed
             const fieldList = Object.keys(row).filter(field => field !== 'id');
@@ -410,6 +419,7 @@ export default class EmpChildLauraPag extends NavigationMixin(LightningElement) 
             this.dispatchEvent(this.allowSave);
         }
         //PRODUCT RULE LOGIC ENDS HERE --------------------
+        console.log(this.quote.lineItems)
     }
 
     // this functions saves the quote record to the db
@@ -501,6 +511,9 @@ export default class EmpChildLauraPag extends NavigationMixin(LightningElement) 
     handleRowAction(event) {
         this.dataRow = event.detail.row;
         switch(event.detail.action.name){
+            case 'Delete':
+                this.deleteClick = true; 
+                break;
             case 'changeLengthUOM':
                 this.searchLengthUomValues();
                 this.isLengthUomModalOpen = true;
@@ -558,6 +571,62 @@ export default class EmpChildLauraPag extends NavigationMixin(LightningElement) 
         }   
     }
 
+    @track deleteClick = false; 
+    @track dataRow;
+    
+
+    deleteModal(){
+
+        let deleteLines = [];
+        let lines = this.quote.lineItems;
+        let row = lines.findIndex(x => x.record.Id === this.dataRow['Id']);
+        deleteLines.push(this.dataRow['Id'])
+        console.log('initial lines')
+        console.log(lines)
+        console.log('row')
+        console.log(row)
+
+        // Bundle Logic
+        if(lines[row].record['SBQQ__Bundle__c']){
+            let bundleRows = [];
+            for(let i = row; i<lines.length; i++){
+                if(lines[i].parentItemKey === lines[row].key){
+                    bundleRows.push(lines.findIndex(x => x.record.Id === lines[i].record.Id))
+                    deleteLines.push(lines[i].record.Id)
+                }
+            }
+            bundleRows.push(row)
+            bundleRows.forEach(row => {
+                if(lines.length > 1){
+                    lines.splice(row,1)
+                }else{
+                    lines = [];
+                }
+            })
+        }else{
+            if (lines.length > 1){
+                lines.splice(row,1)
+            }else{
+                lines = [];
+            }
+        }
+       
+        deleteQuoteLines({quoteIds: deleteLines})
+        console.log(`Deleted Lines: ${deleteLines}`)
+        this.quote.lineItems = lines; 
+        this.regenerateFlatLines(0);
+        console.log(`Lines after delete:`)
+        console.log(this.quote.lineItems)
+       
+        this.deleteClick = false;
+    }
+
+    //CLOSE DELETE MODAL
+    closeDeleteModal(){
+        this.deleteClick = false;
+    }
+
+
     lengthUomList = [];
     searchLengthUomValues(){
         if(this.lengthUom.data.values){
@@ -575,7 +644,7 @@ export default class EmpChildLauraPag extends NavigationMixin(LightningElement) 
 
     uomList = [];
     searchUomValuesForProduct2(){
-        
+        console.log(this.dataRow['ProdLevel2__c'])
         if(this.dataRow['ProdLevel2__c'] != null && this.dataRow['ProdLevel2__c'] != ''){
             uomDependencyLevel2List({productLevel2 : this.dataRow['ProdLevel2__c']})
             .then((data)=>{

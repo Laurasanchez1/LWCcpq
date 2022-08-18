@@ -1,3 +1,13 @@
+import queryCT from '@salesforce/apex/CustomerTierController.queryCT';
+import queryPPT from '@salesforce/apex/ProductPricingTierController.queryPPT';
+import queryBlockPrices from '@salesforce/apex/BlockPriceController.queryBlockPrices';
+import queryAscendPackagingAdder from '@salesforce/apex/AscendPackagingAdderController.queryAscendPackagingAdder';
+import queryUOM from '@salesforce/apex/UomConversionController.queryUOM';
+import queryProductRules from '@salesforce/apex/ProductRuleController.queryProductRules';
+import queryContract from '@salesforce/apex/ContractController.getContract';
+import querySchedules from '@salesforce/apex/ContractController.getDiscountSchedulesByContract';
+import queryPremiseMaps from '@salesforce/apex/PremiseMapController.queryPremiseMaps';
+
 //Function to check error conditions of a product rule
 const conditionsCheck = (errorConditions, quote, conditionsMet, evaluateQuoteLines) => {
     //console.log('entered conditions');
@@ -86,4 +96,49 @@ const operatorConverter = (list,operator) => {
     return list.reduce(operations[operator]);
 }
 
-export { operatorConverter, conditionsCheck }
+const build = async(quote) => {
+    
+    // Get array of Products with Block Pricing
+    const blockProducts = quote.lineItems
+    .filter(line => line.record['SBQQ__BlockPrice__c'])
+    .map(line => line.record['SBQQ__Product__c']);
+    const listBlockProducts = "('" + blockProducts.join("', '") + "')";
+
+    // Query SF objects and set state
+    const [ 
+        customerTiers,
+        prodTiers,
+        blockPrices,
+        ascendPackagingList,
+        uomRecords,
+        productRules,
+        contracts,
+        premiseMaps
+    ] = await Promise.all([
+        queryCT({accountId: quote.record['SBQQ__Account__c']}),
+        queryPPT({prodLevel1List: quote.lineItems.map(line => line.record['ProdLevel1__c'])}),
+        queryBlockPrices({listProduct: listBlockProducts}),
+        queryAscendPackagingAdder(),
+        queryUOM(),
+        queryProductRules(),
+        queryContract({accountId: quote.record['SBQQ__Account__c'], endUser: quote.record['End_User__c']}),
+        queryPremiseMaps()
+    ]);
+
+    const listContracts = "('" + contracts.join("', '") + "')";
+    const schedules = await querySchedules({contractArray: listContracts});
+
+    return {
+        customerTiers,
+        prodTiers,
+        blockPrices,
+        ascendPackagingList,
+        uomRecords,
+        productRules,
+        contracts,
+        schedules,
+        premiseMaps
+    }
+}
+
+export { operatorConverter, conditionsCheck, build }

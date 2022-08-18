@@ -447,4 +447,22 @@ public with sharing class QuoteController {
 
         return valuesMap;
     }
+
+    @AuraEnabled
+    public static void deleteQuoteLines(List<String> quoteIds){
+        try {
+            
+            System.debug(quoteIds);
+
+            for(String quoteId : quoteIds){
+                SBQQ__QuoteLine__c obj = [SELECT Id FROM SBQQ__QuoteLine__c WHERE Id =: quoteId];
+              
+                delete obj;
+                System.debug('paso');
+            }
+
+        } catch (Exception e) {
+            throw new AuraHandledException(e.getMessage());
+        }
+    }
 }

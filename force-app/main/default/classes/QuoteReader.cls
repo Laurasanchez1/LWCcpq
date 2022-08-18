@@ -5,4 +5,6 @@ public with sharing class QuoteReader {
         // QuoteModel quote = (QuoteModel) JSON.deserialize(quoteJSON, QuoteModel.class);
         return quoteJSON;
     }
+
+    
 }
