@@ -12,7 +12,7 @@ import deleteQuoteLines from '@salesforce/apex/QuoteController.deleteQuoteLines'
 import { onBeforePriceRules, onBeforePriceRulesBatchable } from './qcp';
 import { conditionsCheck } from './utils';
 import hardcodedRules from './productRules';  //not used rn
-import wrapQuoteLine from '@salesforce/apex/ProductRuleController.wrapQuoteLine';
+import wrapQuoteLine from '@salesforce/apex/QuoteController.wrapQuoteLine';
 
 import { getObjectInfo } from 'lightning/uiObjectInfoApi';
 import { getPicklistValues } from 'lightning/uiObjectInfoApi';
@@ -79,6 +79,7 @@ export default class EmpChildLauraPag extends NavigationMixin(LightningElement) 
     uomRecords = [];
     allowSave = true;
 
+
     connectedCallback(){
         const load = async() => {
             const quote = await read({quoteId: this.quoteId});
@@ -124,7 +125,8 @@ export default class EmpChildLauraPag extends NavigationMixin(LightningElement) 
             });
             return flatLines;
         }
-        
+
+      
         load().then(flatLines => { 
             this.flatLines = flatLines;
             //olga changed here
@@ -147,10 +149,13 @@ export default class EmpChildLauraPag extends NavigationMixin(LightningElement) 
     lengthUom;
 
     saveValues(event) {
+        
         let lines = this.quote.lineItems;
         const minQtyLines=[];
         // console.log(lines)
         // Inspect changes
+        
+
         event.detail.draftValues.forEach((row, index) => {
             
             // Obtain row id
@@ -201,7 +206,7 @@ export default class EmpChildLauraPag extends NavigationMixin(LightningElement) 
                 minQtyLines.push(parseInt(rowId)+1);  //row Id so the alert index matches the number displayed on datatable
                 lines[myIndex].record['SBQQ__Quantity__c']=lines[myIndex].record['Minimum_Order_Qty__c'];
             } else {
-                //console.log('quantity ok!')
+                console.log('quantity ok!')
             }
 
         });  //End of for each loop
@@ -215,6 +220,7 @@ export default class EmpChildLauraPag extends NavigationMixin(LightningElement) 
             this.dispatchEvent(evt);
         }
         //MIN ORDER QTY LOGIC ENDS HERE
+        
 
         this.regenerateFlatLines(0);
 
@@ -426,7 +432,10 @@ export default class EmpChildLauraPag extends NavigationMixin(LightningElement) 
     // and navigates back to the quote record page
     @api
     exit() {
+    
         this.loading = true;
+        deleteQuoteLines({quoteIds: this.deleteLines})
+        console.log(`Deleted Lines: ${this.deleteLines}`)
         // use save API to update the quote
         save({ quoteJSON: JSON.stringify(this.quote) })
         .then(result => {
@@ -485,6 +494,8 @@ export default class EmpChildLauraPag extends NavigationMixin(LightningElement) 
                     }
                 }
             }
+            console.log('new quotelines')
+            console.log(this.quote.lineItems)
     
             this.regenerateFlatLines(1000);
 
@@ -573,14 +584,18 @@ export default class EmpChildLauraPag extends NavigationMixin(LightningElement) 
 
     @track deleteClick = false; 
     @track dataRow;
+    deleteLines = [];
     
 
     deleteModal(){
 
-        let deleteLines = [];
+        console.log('datarow, row id?')
+        console.log(this.dataRow.rowId)
         let lines = this.quote.lineItems;
-        let row = lines.findIndex(x => x.record.Id === this.dataRow['Id']);
-        deleteLines.push(this.dataRow['Id'])
+        let row = lines.findIndex(line => line.key === this.dataRow.rowId);
+        if(this.dataRow['Id']){
+            this.deleteLines.push(this.dataRow['Id'])
+        }
         console.log('initial lines')
         console.log(lines)
         console.log('row')
@@ -592,7 +607,9 @@ export default class EmpChildLauraPag extends NavigationMixin(LightningElement) 
             for(let i = row; i<lines.length; i++){
                 if(lines[i].parentItemKey === lines[row].key){
                     bundleRows.push(lines.findIndex(x => x.record.Id === lines[i].record.Id))
-                    deleteLines.push(lines[i].record.Id)
+                    if(lines[i].record.Id){
+                        this.deleteLines.push(lines[i].record.Id)
+                    }
                 }
             }
             bundleRows.push(row)
@@ -611,8 +628,8 @@ export default class EmpChildLauraPag extends NavigationMixin(LightningElement) 
             }
         }
        
-        deleteQuoteLines({quoteIds: deleteLines})
-        console.log(`Deleted Lines: ${deleteLines}`)
+        // deleteQuoteLines({quoteIds: deleteLines})
+        console.log(`Deleted Lines: ${this.deleteLines}`)
         this.quote.lineItems = lines; 
         this.regenerateFlatLines(0);
         console.log(`Lines after delete:`)

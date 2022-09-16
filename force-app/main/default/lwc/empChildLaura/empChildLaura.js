@@ -11,7 +11,8 @@ import queryProductRules from '@salesforce/apex/ProductRuleController.queryProdu
 import { onBeforePriceRules, onBeforePriceRulesBatchable } from './qcp';
 import { conditionsCheck } from './utils';
 import hardcodedRules from './productRules';  //not used rn
-import wrapQuoteLine from '@salesforce/apex/ProductRuleController.wrapQuoteLine';
+import wrapQuoteLine from '@salesforce/apex/QuoteController.wrapQuoteLine';
+
 
 import { getObjectInfo } from 'lightning/uiObjectInfoApi';
 import { getPicklistValues } from 'lightning/uiObjectInfoApi';
@@ -299,6 +300,9 @@ export default class EmpChild extends NavigationMixin(LightningElement) {
     exit() {
         this.loading = true;
         // use save API to update the quote
+        console.log('quote')
+        console.log(JSON.stringify(this.quote))
+        console.log(this.quote)
         save({ quoteJSON: JSON.stringify(this.quote) })
         .then(result => {
             // redirect user to the quote record page

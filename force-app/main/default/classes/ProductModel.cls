@@ -1,5 +1,6 @@
 public class ProductModel {
-    public Product2 record;
+    @AuraEnabled
+    public Product2 record {get; set;}
     public Id upgradedAssetId;
     public String currencySymbol;
     public String currencyCode;

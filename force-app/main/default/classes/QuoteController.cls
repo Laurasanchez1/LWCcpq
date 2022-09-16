@@ -136,6 +136,7 @@ public with sharing class QuoteController {
         //Get all of the custom field values from the filtered grouping - gets it from the custom settings
 
         BL_NSP_Fields__c customFilters = custFieldsMap.get(product.Filtered_Grouping__c);
+        system.debug(customFilters);
         if(product.Filtered_Grouping__c == 'Premise Cable'){
             System.debug('is premise cable');
             if(customFilters.Attribute_1__c!= null){
@@ -451,14 +452,9 @@ public with sharing class QuoteController {
     @AuraEnabled
     public static void deleteQuoteLines(List<String> quoteIds){
         try {
-            
-            System.debug(quoteIds);
-
             for(String quoteId : quoteIds){
                 SBQQ__QuoteLine__c obj = [SELECT Id FROM SBQQ__QuoteLine__c WHERE Id =: quoteId];
-              
                 delete obj;
-                System.debug('paso');
             }
 
         } catch (Exception e) {

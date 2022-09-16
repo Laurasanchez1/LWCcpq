@@ -3,13 +3,14 @@ import { NavigationMixin } from 'lightning/navigation';
 import read from '@salesforce/apex/myQuoteExample.read';
 import save from '@salesforce/apex/myQuoteCalculator.save';
 
-import { onBeforePriceRules } from './qcp';
-import { build, conditionsCheck } from './utils';
-import hardcodedRules from './productRules';  //not used rn
-import wrapQuoteLine from '@salesforce/apex/ProductRuleController.wrapQuoteLine';
+import { onBeforePriceRules, onBeforePriceRulesBatchable } from './qcp';
+import { build, conditionsCheck, priceRuleLookup, produceNewQL } from './utils';
+import wrapQuoteLine from '@salesforce/apex/QuoteController.wrapQuoteLine';
 import searchAgreement from '@salesforce/apex/SearchAgreementLookupController.search';
 import discountPrinter from '@salesforce/apex/DiscountController.discountPrinter';
 import tiersByScheduleId from '@salesforce/apex/DiscountController.tiersByScheduleId';
+import deleteQuoteLines from '@salesforce/apex/QuoteController.deleteQuoteLines';
+import queryPPT from '@salesforce/apex/ProductPricingTierController.queryPPT';
 
 import { getObjectInfo } from 'lightning/uiObjectInfoApi';
 import { getPicklistValues } from 'lightning/uiObjectInfoApi';
@@ -25,8 +26,8 @@ import uomDependencyLevel2List from '@salesforce/apex/QuoteController.uomDepende
 import NSPAdditionalFields from '@salesforce/apex/QuoteController.NSPAdditionalFields';
 
 const columns = [
-    { label: 'Name', fieldName: 'Quote_Line_Name__c' },
-    { label: 'Description', fieldName: 'SBQQ__Description__c' },
+    { label: 'Product', fieldName: 'Quote_Line_Name__c', editable: false ,sortable: true, wrapText: false, initialWidth: 250,}, //References Quote_Line_Name__c in Sandbox
+    { label: 'Description', fieldName: 'SBQQ__Description__c', editable: true ,sortable: true, wrapText: false, initialWidth: 100,},
     { label: 'Quantity', fieldName: 'SBQQ__Quantity__c', type: 'number', editable: true },
     { label: 'UOM', sortable: true, fieldName: 'UOM__c' , type: "button",
         typeAttributes: { label: { fieldName: 'UOM__c' }, name: 'changeUOM', value: { fieldName: 'UOM__C' }, iconPosition: 'right', variant: 'base', iconName: 'utility:chevrondown' }},
@@ -41,8 +42,23 @@ const columns = [
     { label: 'NSP', type: 'button-icon', initialWidth: 30,
         typeAttributes:{iconName: 'action:google_news', name: 'NSP', variant:'brand', size:'xxx-small'}},
     { label: 'Tiers', type: 'button-icon', initialWidth: 30,
-        typeAttributes:{iconName: 'action:adjust_value', name: 'Tiers', variant:'brand', size:'xxx-small'}}
+        typeAttributes:{iconName: 'action:adjust_value', name: 'Tiers', variant:'brand', size:'xxx-small'}},
+    { label: 'Line Notes', type: 'button-icon',initialWidth: 30,typeAttributes:{iconName: 'action:new_note', name: 'Linenote', variant:'brand', size:'xxx-small'}},
+    { label: '', type: 'button-icon',initialWidth: 20,typeAttributes:{iconName: 'action:delete', name: 'Delete', variant:'border-filled', size:'xxx-small'}},
     // replace
+];
+
+const DETAIL_COLUMNS = [
+    { label: 'Product', fieldName: 'Quote_Line_Name__c', editable: false ,sortable: true, wrapText: false, initialWidth :325,},
+    { label: 'Billing Tolerance', fieldName: 'BL_Billing_Tolerance__c', editable: true ,sortable: true, wrapText: false,type: 'number',hideDefaultActions: true },
+    { label: 'Source', fieldName: 'BL_Source__c', editable: true ,sortable: true, wrapText: false, hideDefaultActions: true},
+    { label: 'Destination', fieldName: 'BL_Destination__c', editable: true ,sortable: true, wrapText: false, hideDefaultActions: true},
+    {label: 'Alternative Indicator',sortable: true,type: "button", typeAttributes:
+    { name: 'alternativeindicator', value: { fieldName: 'SBQQ__Optional__c' }, iconPosition: 'right', variant: 'base', iconName: { fieldName: 'Alternative_Icon__c' } ,},},
+       { label: 'NSP', type: 'button-icon',initialWidth: 30,typeAttributes:{iconName: 'action:google_news', name: 'NSP', variant:'brand', size:'xxx-small'}},
+    { label: 'Updates', type: 'button-icon',initialWidth: 30,typeAttributes:{iconName: 'action:adjust_value', name: 'Tiers', variant:'brand', size:'xxx-small'}},
+    { label: 'Line Notes', type: 'button-icon',initialWidth: 30,typeAttributes:{iconName: 'action:new_note', name: 'Linenote', variant:'brand', size:'xxx-small'}},
+    { label: '', type: 'button-icon',initialWidth: 20,typeAttributes:{iconName: 'action:delete', name: 'Delete', variant:'border-filled', size:'xxx-small'}}
 ];
 
 const discountTierColumns = [
@@ -67,12 +83,15 @@ export default class EmpChild extends NavigationMixin(LightningElement) {
     productRules = [];
     uomRecords = [];
     contracts = [];
+    priceRules = [];
+    isHomeTab = true;
     allowSave = true;
 
     connectedCallback(){
         const load = async() => {
             const quote = await read({quoteId: this.quoteId});
             this.quote = JSON.parse(quote);
+            console.log(this.quote);
 
             // Build state of the app
             const payload = await build(this.quote);
@@ -85,19 +104,29 @@ export default class EmpChild extends NavigationMixin(LightningElement) {
             this.ascendPackagingList = payload.ascendPackagingList;
             this.productRules = payload.productRules;
             this.uomRecords = payload.uomRecords;
+            this.premiseMaps = payload.premiseMaps;
+            this.priceRules = payload.priceRules;
 
-            const flatLines = this.quote.lineItems.filter(line => !line.record['SBQQ__ProductOption__c']).map(line => {
-                return {
-                    rowId: line['key'],
-                    isNSP: nspGroupings.includes(line.record['Filtered_Grouping__c']) ? true : false,
-                    ...line.record
-                }
-            });
+            let flatLines = [];
+            if(this.quote.lineItems.length){
+                flatLines = this.quote.lineItems.filter(line => !line.record['SBQQ__ProductOption__c']).map(line => {
+                    return {
+                        rowId: line['key'],
+                        isNSP: nspGroupings.includes(line.record['Filtered_Grouping__c']) ? true : false,
+                        ...line.record
+                    }
+                });
+            }
             return flatLines;
         }
         
-        load().then(flatLines => { this.flatLines = flatLines; this.loading = false; this.updateQuoteTotal(); console.log('Script loaded');});
-      
+        load().then(flatLines => { 
+            this.flatLines = flatLines;
+            this.startingPageControl();
+            this.loading = false;
+            this.updateQuoteTotal(); 
+            console.log('Script loaded');
+        });
     }
 
     //GETTING PICKLIST VALUES IN UOM/LENGTH UOM/ DEPENDENT ON LEVEL 2
@@ -113,12 +142,11 @@ export default class EmpChild extends NavigationMixin(LightningElement) {
     @wire(getPicklistValues,{ recordTypeId: '$objectInfo.data.defaultRecordTypeId', fieldApiName: OVERRIDE_REASON})
     overrideReasonsList;
 
-    handleCellChange(event) {
+    saveValues(event) {
         let lines = this.quote.lineItems;
         const minQtyLines=[];
-        // console.log(lines)
+        
         // Inspect changes
-        console.log(event.detail.draftValues);
         event.detail.draftValues.forEach((row, index) => {
             
             // Obtain row id
@@ -163,13 +191,10 @@ export default class EmpChild extends NavigationMixin(LightningElement) {
             // BUNDLE LOGIC ENDS HERE --------
 
             //MIN ORDER QTY LOGIC STARTS HERE
-            //console.log("---Min Order Qty ---");
             if(lines[myIndex].record['SBQQ__Quantity__c'] < parseInt(lines[myIndex].record['Minimum_Order_Qty__c'])){
-                //console.log('quantity is inferior that minimum')
-                minQtyLines.push(parseInt(rowId)+1);  //row Id so the alert index matches the number displayed on datatable
+                //row Id so the alert index matches the number displayed on datatable
+                minQtyLines.push(parseInt(rowId)+1);
                 lines[myIndex].record['SBQQ__Quantity__c']=lines[myIndex].record['Minimum_Order_Qty__c'];
-            } else {
-                //console.log('quantity ok!')
             }
 
         });  //End of for each loop
@@ -185,19 +210,102 @@ export default class EmpChild extends NavigationMixin(LightningElement) {
         //MIN ORDER QTY LOGIC ENDS HERE
 
         this.regenerateFlatLines(0);
-
-        //In case we want to evaluate product rules here!
-        // if(this.productRules.length !==0){
-        //     //console.log('Product Rules exist');
-        //     this.allowSave = false;
-        //     this.productRuleLookup(this.productRules,this.quote)
-        //     .then(allowSave => {
-        //         this.allowSave = allowSave;
-        //         console.log('allow Save: '+this.allowSave);
-        //     })
-            
-        // }
         
+    }
+
+    @track inlineEditing = false; 
+    handleCellChange(event) {
+        let lines = this.quote.lineItems;
+        const minQtyLines=[];
+
+        // Inspect changes
+        let page; 
+        this.inlineEditing = true; 
+        if(this.tabSelected == 'Home'){
+            page = this.pageHome;
+
+        } else if (this.tabSelected == 'Detail'){
+            page = this.pageDetail;
+        }
+        event.detail.draftValues.forEach((row, index) => {
+            
+            // Obtain row id
+            const rowId = parseInt(row.id.substring(4))+((page-1)*this.pageSize); //row.id.substring(4); //((this.page-1)*this.pageSize)
+            const localKey = this.flatLines[rowId].rowId;
+            // Obtain quote lines index
+            const myIndex = lines.findIndex(ql => ql.key === localKey);
+
+            // Obtain list of fields that were changed
+            const fieldList = Object.keys(row).filter(field => field !== 'id');
+            if(!lines[myIndex].parentItemKey){
+                // Cycle through the fields that were changed
+                for(let field of fieldList){
+                    // change value of fields on that line
+                    lines[myIndex].record[field] = row[field];
+                }
+            }
+            
+            // BUNDLE LOGIC STARTS HERE --------
+            // If line is a bundle parent
+            if(lines[myIndex].record['SBQQ__Bundle__c']) {
+                // Cycle through products that come next
+                for(let i = myIndex; i < lines.length; i++){
+                    // if product is a parent
+                    if(lines[i].record['SBQQ__Bundle__c']){
+                        continue;
+                    }
+                    // if product belongs to parent
+                    if(lines[i].parentItemKey === lines[myIndex].key){
+                        // if is type 'component'
+                        if(lines[i].record['SBQQ__OptionType__c'] === 'Component'){
+                            // Adjust quantity accordingly
+                            lines[i].record['SBQQ__Quantity__c'] = lines[myIndex].record['SBQQ__Quantity__c'] * lines[i].record['SBQQ__BundledQuantity__c'];
+                        }
+                    } else {
+                        break; // Stop cycling, reached the end of bundle
+                    }
+                }
+            }
+            
+            // BUNDLE LOGIC ENDS HERE --------
+
+            //MIN ORDER QTY LOGIC STARTS HERE --------
+            let minQty = parseInt(lines[myIndex].record['Minimum_Order_Qty__c']);
+            let actualMinQty;
+            minQty != 0 && !isNaN(minQty) ? actualMinQty = minQty : actualMinQty = 1;
+            let minMult = parseInt(lines[myIndex].record['Minimum_Order_Multiple__c']);
+            
+            //First check minimum quantity
+            if(lines[myIndex].record['SBQQ__Quantity__c'] < minQty){
+                lines[myIndex].record['SBQQ__Quantity__c'] = actualMinQty;
+                const evt = new ShowToastEvent({
+                    title: 'Warning Fields',
+                    message: 'The minimum quantity required has not been reached for line: ' + (parseInt(rowId)+1),  //row Id so the alert index matches the number displayed on datatable
+                    variant: 'warning', mode: 'dismissable'
+                });
+                this.dispatchEvent(evt);
+
+            } else if (minMult != 0 && !isNaN(minMult)) {
+
+                //Then checks min multiple
+                if(lines[myIndex].record['SBQQ__Quantity__c'] % minMult != 0){
+                    lines[myIndex].record['SBQQ__Quantity__c'] = actualMinQty;  //Goes back to min qty --> should be correclty set
+                    
+                    //display toast here because it runs at the same tame in cell change saving
+                    const evt = new ShowToastEvent({
+                        title: 'Warning Fields',
+                        message: 'Required multiple not reached: Line '+ (parseInt(rowId)+1) + ' quantity must be multiple of '+ minMult,
+                        variant: 'warning', mode: 'dismissable'
+                    });
+                    this.dispatchEvent(evt);
+                }
+            }
+            //MIN ORDER QTY LOGIC ENDS HERE  --------
+
+        });  //End of for each loop
+
+
+        this.regenerateFlatLines(0);
     }
 
     // this function triggers the calculation sequence locally
@@ -240,17 +348,34 @@ export default class EmpChild extends NavigationMixin(LightningElement) {
             // BLOCKPRICES LOGIC ENDS HERE -----------
             
             this.quote.lineItems = lines;
+            
+            //query ppt
+            const prodTiers = await queryPPT({prodLevel1List: this.quote.lineItems.map(line => line.record['ProdLevel1__c'])});
 
             // execute qcp script
-            let startTime = window.performance.now();
-            onBeforePriceRules(this.quote, this.ascendPackagingList, this.tiers, this.prodTiers, this.uomRecords, this.schedules)
-            .then(newQuote => {
-                this.quote = newQuote;
-                this.regenerateFlatLines(500);
-
+            let newQuote;
+            if (this.quote.lineItems.length <= 100){
+                let startTime = window.performance.now();
+                newQuote = await onBeforePriceRules(this.quote, this.ascendPackagingList, this.tiers, prodTiers, this.uomRecords, this.schedules, this.premiseMaps)
                 let endTime = window.performance.now();
                 console.log(`onBeforePriceRules waited ${endTime - startTime} milliseconds`);
-            });
+            } else {
+                let startTimeBatchable = window.performance.now();
+                newQuote = await onBeforePriceRulesBatchable(this.quote, this.ascendPackagingList, this.tiers, prodTiers, this.uomRecords, this.schedules, this.premiseMaps)
+                let endTimeBatchable = window.performance.now();
+                console.log(`onBeforePriceRulesBatchable waited ${endTimeBatchable - startTimeBatchable} milliseconds`);
+            }
+            this.quote = newQuote;
+            this.regenerateFlatLines(500);
+
+            //PRICE RULE LOGIC STARTS HERE --------------------
+            if(this.priceRules.length !==0){
+                const startedPriceRules = window.performance.now();
+                priceRuleLookup(this.priceRules,this.quote);
+                const afterPriceRules = window.performance.now();
+                console.log(`priceRuleLookup waited ${afterPriceRules - startedPriceRules} milliseconds`);
+            }
+            //PRICE RULE LOGIC ENDS HERE --------------------
         
         } else if(this.allowSave == false){
             console.log('No save --> Wait for the rules to evaluate');
@@ -272,23 +397,22 @@ export default class EmpChild extends NavigationMixin(LightningElement) {
     // this functions saves the quote record to the db
     // and navigates back to the quote record page
     @api
-    exit() {
+    async exit() {
         this.loading = true;
+        // delete quote lines that were removed from the db
+        await deleteQuoteLines({quoteIds: this.deleteLines});
         // use save API to update the quote
-        save({ quoteJSON: JSON.stringify(this.quote) })
-        .then(result => {
-            // redirect user to the quote record page
-            setTimeout(() => {
-                this[NavigationMixin.Navigate]({
-                    type: 'standard__recordPage',
-                    attributes: {
-                        recordId: this.quoteId,
-                        actionName: 'view'
-                    },
-                });
-            }, 2000);
-        });
-        
+        await save({ quoteJSON: JSON.stringify(this.quote) });
+        // redirect user to the quote record page
+        setTimeout(() => {
+            this[NavigationMixin.Navigate]({
+                type: 'standard__recordPage',
+                attributes: {
+                    recordId: this.quoteId,
+                    actionName: 'view'
+                },
+            });
+        }, 2000);
     }
 
     // this function clones the selected quote lines while maintaining
@@ -359,6 +483,11 @@ export default class EmpChild extends NavigationMixin(LightningElement) {
     handleRowAction(event) {
         this.dataRow = event.detail.row;
         switch(event.detail.action.name){
+            
+            case 'Delete':
+                this.deleteClick = true;
+                break;
+
             case 'changeLengthUOM':
                 this.searchLengthUomValues();
                 this.isLengthUomModalOpen = true;
@@ -381,9 +510,17 @@ export default class EmpChild extends NavigationMixin(LightningElement) {
                 }
                 break;
 
-            case 'Tiers':
-                this.loadOverridesModal();
-                this.isOverridesModalOpen = true;
+                case 'Tiers':
+                    this.loadOverridesModal();
+                    this.isOverridesModalOpen = true;
+                break;
+
+            case 'Linenote':
+                    this.lineNotePopUp = true; 
+                break;
+
+            case 'alternativeindicator':
+                this.changingAlternative();
                 break;
             default:
             alert('There is an error trying to complete this action');    
@@ -435,13 +572,11 @@ export default class EmpChild extends NavigationMixin(LightningElement) {
         if(this.dataRow['ProdLevel2__c'] != null && this.dataRow['ProdLevel2__c'] != ''){
             uomDependencyLevel2List({productLevel2 : this.dataRow['ProdLevel2__c']})
             .then((data)=>{
-                //console.log('HERE UOM VALUES');
                 let list = JSON.parse(data);
                 let prodLevel2 = Object.getOwnPropertyNames(list);
                 this.uomList = list[prodLevel2[0]];
             })
             .catch((error)=>{
-                console.log(error);
                 const evt = new ShowToastEvent({
                     title: 'There is a problem loading the possible values for the UOM value',
                     message: 'Please, do not edit UOM values now or refresh the UI to correct this mistake.',
@@ -470,7 +605,8 @@ export default class EmpChild extends NavigationMixin(LightningElement) {
         NSPAdditionalFields({productId: this.dataRow['SBQQ__Product__c'] })
         .then( data => {  
             
-            let listNspValues = JSON.parse(data); 
+            let listNspValues = JSON.parse(data);
+            console.log(listNspValues);
             let values = [];
             let labels = [];
             let types = [];
@@ -585,6 +721,7 @@ export default class EmpChild extends NavigationMixin(LightningElement) {
             this.quote.lineItems[index].record['Length_UOM__c'] = this.newLengthUOM;
             
             this.closeLengthUomModal();
+            this.notChangePageWhenEditing();
             this.regenerateFlatLines(0);
         }
         
@@ -599,6 +736,7 @@ export default class EmpChild extends NavigationMixin(LightningElement) {
             this.quote.lineItems[index].record['UOM__c'] = this.newUOM;
         }
         this.closeUomModal();
+        this.notChangePageWhenEditing();
         this.regenerateFlatLines(0);
     }
 
@@ -613,7 +751,6 @@ export default class EmpChild extends NavigationMixin(LightningElement) {
             setTimeout(()=>{ this.showNSP = true; }, 200);
             this.nspValues[this.nspValues.findIndex(x => x.label === event.target.label)].value = value;
         } else {
-            //console.log('There is a problem finding the line selected.');
             const evt = new ShowToastEvent({
                 title: 'Problem changing NSP values',
                 message: 'The changes cannot be saved',
@@ -622,6 +759,7 @@ export default class EmpChild extends NavigationMixin(LightningElement) {
             });
             this.dispatchEvent(evt);
         }
+        this.notChangePageWhenEditing();
         this.regenerateFlatLines(0);
         
     }
@@ -641,70 +779,64 @@ export default class EmpChild extends NavigationMixin(LightningElement) {
             this.updateQuoteTotal();
             this.flatLines = flatLines;
             this.columns = [...columns];
+            this.detailColumns = [...DETAIL_COLUMNS]; 
+            this.startingPageControl();
             this.loading = false;
         }, randDelay);
     }
 
     // this function updates the net total amount on the parent component
     updateQuoteTotal() {
-        this.dispatchEvent(new CustomEvent('updatetotal', {
-            bubbles: true,
-            detail: this.quote.lineItems.reduce((o, line) => {
-                return {
-                    record: {
-                        SBQQ__NetTotal__c: o.record['SBQQ__NetTotal__c'] + line.record['SBQQ__NetTotal__c']
+        try{
+            let detail = { record: { SBQQ__NetTotal__c: '0' } }; // initialize to 0
+            if(this.quote.lineItems.length){
+                detail = this.quote.lineItems.reduce((o, line) => {
+                    return {
+                        record: {
+                            SBQQ__NetTotal__c: o.record['SBQQ__NetTotal__c'] + line.record['SBQQ__NetTotal__c']
+                        }
                     }
-                }
-            })
-        }));
-    }
-
-    priceOverride(lines) {
-
-        console.log(lines)
-        // Loop through lines
-        const overridedLines = lines.map(line => {
-            //if orginal price is different than net price
-            if (line.record['SBQQ__OriginalPrice__c'] !== line.record['SBQQ__NetPrice__c']) {
-                // Check the ‘Price Override Approval Required' field, and write 'Price Override Approval Required’ in the Approval Reasons field in the Quote Line Object
-                line.record['Price_Override_Approval_Required__c'] = true;
-                line.record['Approval_Reasons__c'] = 'Price Override Approval Required';
-                console.log("Successfully overrided price");
-                console.log("----Line record After Override----");
-                console.log(line.record.SBQQ__ProductName__c)
-                console.log(line.record)
-
-            } else {
-                //uncheck the ‘Price Override Approval Required' field
-                line.record['Price_Override_Approval_Required__c'] = false;
-                line.record['Approval_Reasons__c'] = '';
+                });
             }
-
-            return line;
-        })
-
-        return overridedLines;
+            this.dispatchEvent(new CustomEvent('updatetotal', {
+                bubbles: true,
+                detail
+            }));
+        } catch(error) {console.log(error)}
     }
 
     //Product Rule handling
     async productRuleLookup(productRules, quote){  //The product rules already come sorted by evaluation order from the query
-
+        let data = []
         // wrap quote line model records for conversion
         const quoteLines = quote.lineItems.map(line => {
         const { attributes, ...other } = line.record;
         return other;
         });
-        //console.log('Quote Lines');
-        //console.log(quoteLines);
-        // recalculate formula fields
-        const data = await wrapQuoteLine({qlJSON: JSON.stringify(quoteLines)});
-        //console.log('Called recalc function');
+        if (quoteLines.length <= 100){
+            let startTime = window.performance.now();
+            data = await wrapQuoteLine({qlJSON: JSON.stringify(quoteLines)});
+            let endTime = window.performance.now();
+            console.log(`wrapQuoteLine waited ${endTime - startTime} milliseconds`);
+        }else{
+            let linesSaver = [];
+            let results = [];
+            while (quoteLines.length > 0){
+                const batchSize = 100;
+                const linesBatch = quoteLines.splice(0, batchSize);
+                linesSaver.push(linesBatch);
+            }
+            let startTime = window.performance.now();
+            results = await Promise.all(linesSaver.map(lines => wrapQuoteLine({qlJSON: JSON.stringify(lines)})));
+            let endTime = window.performance.now();
+            console.log(`wrapQuoteLine with batches waited ${endTime - startTime} milliseconds`);
+            results.forEach(line =>{
+                data = data.concat(line);
+            })
+        }
         const evaluateQuoteLines=data;
-        //console.log(evaluateQuoteLines);
-
         //Validation Rules
         const valRules= productRules.filter(rule=> rule['SBQQ__Type__c']=='Validation');
-        //console.log(valRules)
         if(valRules.length !==0){
             for(let valRule of valRules){const triggerRule = conditionsCheck(valRule['SBQQ__ErrorConditions__r'],quote,valRule['SBQQ__ConditionsMet__c'], evaluateQuoteLines);
                 if(triggerRule!==-1){
@@ -714,17 +846,14 @@ export default class EmpChild extends NavigationMixin(LightningElement) {
                     variant: 'error', mode: 'sticky'
                     });
                     this.dispatchEvent(evt);
-                    //return the event to dispatch it when clicking save & calculate! 
-                    return evt;     
+                    //return the event to dispatch it when clicking save & calculate!
+                    return evt;
                 }
             };
-        } else {
-        //console.log('no validation rules here');
         }
 
         //Alert Rules
         const alertRules= productRules.filter(rule=> rule['SBQQ__Type__c']=='Alert');
-        //console.log(alertRules);
         if(alertRules.length !==0){
             for(let alertRule of alertRules){
                 const triggerRule = conditionsCheck(alertRule['SBQQ__ErrorConditions__r'],quote, alertRule['SBQQ__ConditionsMet__c'], evaluateQuoteLines);
@@ -739,7 +868,6 @@ export default class EmpChild extends NavigationMixin(LightningElement) {
                 }
             };
         }
-        //console.log('no alert rules here');
         return true;
     }
 
@@ -747,27 +875,24 @@ export default class EmpChild extends NavigationMixin(LightningElement) {
     @track dragStart;
     @track ElementList = []; 
     popUpReorder = false; 
-    quotelinesLength = 0; 
+    quotelinesLength = 0;
+
     //When user clicks the reorder button
     @api
     reorderLines(){
         this.popUpReorder = true;
-        //console.log(JSON.stringify( this.flatLines));
         this.ElementList = this.flatLines;
-        this.quotelinesLength = this.ElementList.length;
-        //console.log(JSON.stringify(this.ElementList));
+        this.quotelinesLength = this.ElementList.length
     }
+    
     //Close the reorder pop up
     closeReorder(){
         this.popUpReorder = false;
     }
 
     //Functions to reorder by drag and drop 
-
     DragStart(event) {
         this.dragStart = event.target.title;
-        //console.log('Dragging');
-        //console.log(this.dragStart);
         event.target.classList.add("drag");
     }
     DragOver(event) {
@@ -788,13 +913,23 @@ export default class EmpChild extends NavigationMixin(LightningElement) {
           this.splice(to, 0, this.splice(from, 1)[0]);
         };
         this.ElementList.move(currentIndex, newIndex);
-        //console.log(JSON.stringify(this.ElementList));
     }
 
     //When user wants to save the new order
     submitReorder(){
         this.flatLines = this.ElementList;
-        //this.regenerateFlatLines(0);
+        let reorderItems = [];
+        for(let i =0; i < this.flatLines.length; i++){
+            reorderItems.push(this.quote.lineItems.find(element => element.record.Id == this.flatLines[i].Id));
+        } 
+        for(let j =0; j<  this.quote.lineItems.length; j++){
+            if(reorderItems.find(element => element.record.Id == this.quote.lineItems[j].record.Id) == undefined){
+                reorderItems.push(this.quote.lineItems[j]);
+            }
+        }
+
+        this.quote.lineItems = reorderItems;
+        this.regenerateFlatLines(0);
         this.closeReorder();
         const evt = new ShowToastEvent({
             title: 'Table Reordered',
@@ -805,7 +940,316 @@ export default class EmpChild extends NavigationMixin(LightningElement) {
         this.dispatchEvent(evt);
     }
 
-    // OVERRIDES CLASS
+    sortBy;
+    sortDirection; 
+    //Sort Columns
+    handleSortData(event) {       
+        this.sortBy = event.detail.fieldName;       
+        this.sortDirection = event.detail.sortDirection;       
+        this.sortData(event.detail.fieldName, event.detail.sortDirection);
+    }
+    sortData(fieldname, direction) {
+        let parseData = JSON.parse(JSON.stringify(this.dataPages));
+        let keyValue = (a) => {
+            return a[fieldname];
+        };
+       let isReverse = direction === 'asc' ? 1: -1;
+           parseData.sort((x, y) => {
+            x = keyValue(x) ? keyValue(x) : ''; 
+            y = keyValue(y) ? keyValue(y) : '';
+            return isReverse * ((x > y) - (y > x));
+        });
+        this.dataPages = parseData;
+    }
+
+
+    @track tabSelected = 'Home'; 
+    @track detailColumns = DETAIL_COLUMNS; 
+    @track lineNotes = [];
+    //Handle Tabs
+    handleActive(event){
+        if (event.target.value=='Notes'){
+            this.dispatchEvent(new CustomEvent('reorderinactive')); 
+            this.tabSelected = 'Notes'; 
+            this.startingPageControl();
+            this.displayRecordPerPage(1);
+        }
+        else if (event.target.value=='Line'){
+            
+            this.dispatchEvent(new CustomEvent('reorderinactive')); 
+            this.tabSelected = 'Line'; 
+            this.lineNotes = JSON.parse(JSON.stringify(this.flatLines)); //[...this.flatLines];
+            this.lineNotes.forEach((quoteline)=>{ 
+                if(quoteline.Line_Note__c != null){
+                    let text = quoteline.Line_Note__c;
+                    text = text.replace(/<\/p\>/g, "\n");
+                    quoteline.Line_Note__c = text.replace(/<p>/gi, "");
+                    quoteline.Line_Note__c = this.convertToPlain(quoteline.Line_Note__c);
+                }
+                if(quoteline.Quote_Line_Name__c.includes('"')){
+                quoteline.Quote_Line_Name__c = quoteline.Quote_Line_Name__c.replace(/['"]+/g, '');
+            }});
+            this.startingPageControl();
+            this.displayRecordPerPage(1);
+        }
+        else  if (event.target.value=='Detail'){
+            this.dispatchEvent(new CustomEvent('reorderinactive')); 
+            this.tabSelected = 'Detail'; 
+            this.detailColumns = DETAIL_COLUMNS; 
+            this.startingPageControl();
+            this.displayRecordPerPage(1);
+        } else { //MUST BE 'QUOTE HOME'
+            this.dispatchEvent(new CustomEvent('reorderactive')); 
+            this.tabSelected = 'Home';  
+            this.startingPageControl();
+            this.displayRecordPerPage(1);
+        }      
+    }
+
+    //Alternative Indicator - Optional checkbox
+    changingAlternative(){
+        
+        let index = this.quote.lineItems.findIndex(x => x.key === this.dataRow.rowId);
+        if(index != -1){
+            this.quote.lineItems[index].record.SBQQ__Optional__c = !this.quote.lineItems[index].record.SBQQ__Optional__c; 
+            this.quote.lineItems[index].record.SBQQ__Optional__c == true ? this.quote.lineItems[index].record.Alternative_Icon__c = 'utility:check':
+            this.quote.lineItems[index].record.Alternative_Icon__c = 'utility:close'; 
+            this.notChangePageWhenEditing();
+            this.regenerateFlatLines(0);
+
+        }
+    }
+
+    //------- Line Notes Behavior (TAB + POP-UP)
+    lineNotePopUp = false;
+    @track sortedDirection = 'asc';
+    @track sortedColumn = 'Quote_Line_Name__c';
+    //Line notes Tab
+    sort(event) {
+        console.log('sorting');
+        if(this.sortedColumn === event.currentTarget.dataset.id){
+            this.sortedDirection = this.sortedDirection === 'asc' ? 'desc' : 'asc';
+        }else{
+            this.sortedDirection = 'asc';
+        } 
+
+        var reverse = this.sortedDirection === 'asc' ? 1 : -1;
+        let table = JSON.parse(JSON.stringify(this.lineNotes));
+        table.sort((a,b) => {return a[event.currentTarget.dataset.id] > b[event.currentTarget.dataset.id] ? 1 * reverse : -1 * reverse});
+        this.sortedColumn = event.currentTarget.dataset.id;        
+        this.lineNotes = table;
+        this.displayRecordPerPage(this.pageLineNotes);
+
+    } 
+    //Line Notes Display without HTML Tags
+    convertToPlain(html){
+        // Create a new div element
+        var tempDivElement = document.createElement("div");
+        // Set the HTML content with the given value
+        tempDivElement.innerHTML = html;
+        // Retrieve the text property of the element 
+        return tempDivElement.textContent || tempDivElement.innerText || "";
+    } 
+
+    //Pop Up Line Notes
+    closeLineNotes(){
+        this.lineNotePopUp = false;
+    }
+    //Changing Line Notes
+    @track newLineNote; 
+    changingLineNote(event){
+        this.newLineNote = event.detail.value;
+    }
+
+    saveLineNote(){
+        let index = this.quote.lineItems.findIndex(x => x.key === this.dataRow.rowId);
+        this.quote.lineItems[index].record['Line_Note__c'] = this.newLineNote;
+        this.closeLineNotes();
+        this.notChangePageWhenEditing();
+        this.regenerateFlatLines(0);
+    }
+
+    //CLASS: PAGINATION
+    @track linesLength = 0;  
+    @track startingRecord = 1;
+    @track endingRecord = 0; 
+    //@track page = 1; 
+    //@track totalRecountCount = 0;
+    @track dataPages = []; 
+    @track totalPage = 0;
+
+    @track pageSize = 10; 
+    @track totalPageDetail = 0; @track totalPageHome = 0; @track totalPageNotes = 0; @track totalPageLines = 0;
+    @track pageDetail = 1;  @track pageHome = 1;  @track pageProdNotes = 1;  @track pageLineNotes= 1; 
+
+
+    notChangePageWhenEditing(){
+        this.inlineEditing = true; 
+    }
+    //PAGINATION CONTROL FOR ALL 4 TABS
+    startingPageControl(){
+        if(this.inlineEditing){            
+            if(this.tabSelected == 'Home'){this.assignPageValueByTab(this.pageHome);}
+            else if (this.tabSelected == 'Detail'){this.assignPageValueByTab(this.pageDetail);}
+        } else {
+            this.assignPageValueByTab(1);
+        }
+        this.linesLength = this.flatLines.length;
+        this.prodNotesLength = this.prodNotes.length; 
+        let dataToDisplay;
+        switch (this.tabSelected){
+            case 'Home': 
+                this.totalPageHome = Math.ceil(this.linesLength / this.pageSize);
+                this.isHomeTab = true;
+                dataToDisplay= this.flatLines;
+            break;
+            case 'Detail': 
+                this.totalPageDetail = Math.ceil(this.linesLength / this.pageSize);
+                this.isHomeTab = false;
+                dataToDisplay= this.flatLines;
+            break;
+            case 'Line': 
+                this.totalPageLines = Math.ceil(this.lineNotes.length / this.pageSize);
+                this.isHomeTab = false;
+                dataToDisplay = this.lineNotes; 
+            break;
+            case 'Notes': 
+                this.totalPageNotes = Math.ceil(this.prodNotesLength / this.pageSize);
+                this.isHomeTab = false;
+                dataToDisplay = this.prodNotes; 
+            break;
+        }        
+
+        this.dataPages = dataToDisplay.slice(0,this.pageSize);
+        this.endingRecord = this.pageSize;
+
+        if(this.inlineEditing){
+            if(this.tabSelected == 'Home'){this.displayRecordPerPage(this.pageHome); this.inlineEditing = false;}
+            else if (this.tabSelected == 'Detail'){this.displayRecordPerPage(this.pageDetail); this.inlineEditing = false;}
+        }
+        
+    }
+
+    classifyPageByTab(){
+        let page; 
+        switch (this.tabSelected){
+            case 'Home': page = this.pageHome;  break;
+            case 'Detail': page = this.pageDetail;  break;
+            case 'Line': page = this.pageLineNotes;  break;
+            case 'Notes': page = this.pageProdNotes; break;
+        }        
+
+        return page; 
+    }
+
+    assignPageValueByTab(newPage){
+        switch (this.tabSelected){
+            case 'Home': this.pageHome = newPage;  break;
+            case 'Detail': this.pageDetail = newPage;  break;
+            case 'Line': this.pageLineNotes = newPage;  break;
+            case 'Notes': this.pageProdNotes = newPage; break;
+        }
+
+    }
+
+    classifyTotalPageByTab(){
+        let page; 
+        switch (this.tabSelected){
+            case 'Home': page = this.totalPageHome;  break;
+            case 'Detail': page = this.totalPageDetail;  break;
+            case 'Line': page = this.totalPageLines;  break;
+            case 'Notes': page = this.totalPageNotes; break;
+        }
+        return page; 
+    }
+    
+    previousHandler() {
+        let page = this.classifyPageByTab();
+
+        if (page > 1) {
+            page = page - 1; //decrease page by 1
+            this.assignPageValueByTab(page);
+            this.displayRecordPerPage(page);
+        }
+    }
+
+    nextHandler() {
+        let page = this.classifyPageByTab();
+        let totalPage = this.classifyTotalPageByTab();
+        if((page<totalPage) && page !== totalPage){
+            page = page + 1; //increase page by 1
+            this.assignPageValueByTab(page);
+            this.displayRecordPerPage(page);            
+        }             
+    }
+
+    firstHandler() {
+        let page = 1;
+        this.assignPageValueByTab(page);
+        this.displayRecordPerPage(page);    
+    }
+
+    lastHandler() {
+        let page = this.classifyTotalPageByTab();
+        this.assignPageValueByTab(page);
+        this.displayRecordPerPage(page);
+    }
+
+    displayRecordPerPage(page){
+        this.startingRecord = ((page -1) * this.pageSize) ;
+        this.endingRecord = (this.pageSize * page);
+        let dataLength; 
+        let dataToDisplay; 
+        switch (this.tabSelected){
+            case 'Home':
+            case 'Detail':
+                dataLength = this.linesLength; dataToDisplay= this.flatLines;  break;
+            case 'Line': 
+                dataLength = this.linesLength; dataToDisplay = this.lineNotes;  break;
+            case 'Notes':
+                dataLength = this.prodNotesLength; dataToDisplay = this.prodNotes;  break;
+        }
+        this.endingRecord = (this.endingRecord > dataLength) ? dataLength : this.endingRecord;
+        this.dataPages = dataToDisplay.slice(this.startingRecord, this.endingRecord);
+        this.startingRecord = this.startingRecord + 1;
+    }  
+
+    //APPLY DISCOUNT 
+    @api
+    applyDiscountInLines(discountValue){
+        console.log('The Discount Value: '+discountValue);
+
+        try{
+            const rows = this.selectedRows;
+            this.loading = true;
+            for(let row of rows){
+                // find the index of the element that matches the row Id
+                let index = this.quote.lineItems.findIndex(ql => ql.key === row.rowId);
+                this.quote.lineItems[index].record.SBQQ__Discount__c = discountValue; 
+                this.quote.lineItems[index].record.AdditionalDiscountUnit__c = 'Percent';
+            }
+            this.calculate();
+            //this.regenerateFlatLines(1000);
+
+            // send success toast notification
+            const evt = new ShowToastEvent({
+                title: 'Discount applied Successfully',
+                variant: 'success',
+                mode: 'dismissable'
+            });
+            this.dispatchEvent(evt);
+        } catch (error) {
+            console.log(error);
+        }
+    }
+
+
+    //PRODUCT NOTES
+    prodNotesLength = 0; 
+    prodNotes = [];
+    
+    
+    // CLASS: OVERRIDES
     overrideReason = '';
     overrideComment = '';
     isOverrideReason = false;
@@ -921,7 +1365,6 @@ export default class EmpChild extends NavigationMixin(LightningElement) {
 
         this.showTiersList = false;
 
-        console.log(this.quote.lineItems[index]);
     }
 
     resetModalState(){
@@ -1122,43 +1565,147 @@ export default class EmpChild extends NavigationMixin(LightningElement) {
     }
 
     setOverrideValues(){
-        // if(!this.wasReset){
-            if (this.overrideReason == '' && this.isOverrideReason){
-                const evt = new ShowToastEvent({
-                    title: 'Required Override Reason before changing',
-                    message: 'The Override Reason field should be selected before closing the pop-up',
-                    variant: 'error', mode: 'sticky' });
-                this.dispatchEvent(evt);
-            } else {
-                
-                try{
-                let index = this.quote.lineItems.findIndex(ql => ql.key === this.dataRow.rowId);
-                
-                if(this._overrideQuotedLeadTime){
-                    this.quote.lineItems[index].record['Override_Quoted_Lead_Time__c'] = this._overrideQuotedLeadTime;
-                }
 
-                if(this._overrideCustomerTier && this._overrideCustomerTier != this.quote.lineItems[index].record['New_Customer_Tier__c']){
-                    this.quote.lineItems[index].record['Last_Customer_Tier__c'] = this.quote.lineItems[index].record['New_Customer_Tier__c'];
-                    this.quote.lineItems[index].record['New_Customer_Tier__c'] = this._overrideCustomerTier;
-                }
-
-                if(this._overrideBasePrice){
-                    this.quote.lineItems[index].record['Base_Price_Override__c'] = this._overrideBasePrice;
-                }
-
-                if(this._overrideAgreement && this._overrideAgreement != this.quote.lineItems[index].record['New_Discount_Schedule__c'] && this.discountTiers.length > 0){
-                    this.quote.lineItems[index].record['Last_Discount_Schedule__c'] = this.quote.lineItems[index].record['New_Discount_Schedule__c'];
-                    this.quote.lineItems[index].record['New_Discount_Schedule__c'] = this._overrideAgreement;
-                }
-
-                }catch(error){console.log(error)}
-
-                console.log(this.quote.lineItems);
-                this.closeOverridesModal();
+        if (this.overrideReason == '' && this.isOverrideReason){
+            const evt = new ShowToastEvent({
+                title: 'Required Override Reason before changing',
+                message: 'The Override Reason field should be selected before closing the pop-up',
+                variant: 'error', mode: 'sticky' });
+            this.dispatchEvent(evt);
+        } else {
+            
+            try{
+            let index = this.quote.lineItems.findIndex(ql => ql.key === this.dataRow.rowId);
+            
+            if(this._overrideQuotedLeadTime){
+                this.quote.lineItems[index].record['Override_Quoted_Lead_Time__c'] = this._overrideQuotedLeadTime;
             }
 
-        // }
+            if(this._overrideCustomerTier && this._overrideCustomerTier != this.quote.lineItems[index].record['New_Customer_Tier__c']){
+                this.quote.lineItems[index].record['Last_Customer_Tier__c'] = this.quote.lineItems[index].record['New_Customer_Tier__c'];
+                this.quote.lineItems[index].record['New_Customer_Tier__c'] = this._overrideCustomerTier;
+            }
+
+            if(this._overrideBasePrice){
+                this.quote.lineItems[index].record['Base_Price_Override__c'] = this._overrideBasePrice;
+            }
+
+            if(this._overrideAgreement && this._overrideAgreement != this.quote.lineItems[index].record['New_Discount_Schedule__c'] && this.discountTiers.length > 0){
+                this.quote.lineItems[index].record['Last_Discount_Schedule__c'] = this.quote.lineItems[index].record['New_Discount_Schedule__c'];
+                this.quote.lineItems[index].record['New_Discount_Schedule__c'] = this._overrideAgreement;
+            }
+
+            }catch(error){console.log(error)}
+
+            this.closeOverridesModal();
+        }
     }
     
+    // CLASS: DELETE BUTTON
+    deleteClick = false;
+    deleteLines = [];
+
+    closeDeleteModal(){
+        this.deleteClick = false;
+    }
+
+    deleteModal(){
+        let lines = this.quote.lineItems;
+        let row = lines.findIndex(line => line.key === this.dataRow.rowId);
+        if(this.dataRow['Id']){
+            this.deleteLines.push(this.dataRow['Id']);
+        }
+
+        // Bundle Logic
+        if(lines[row].record['SBQQ__Bundle__c']){
+            let bundleRows = [];
+            for(let i = row; i<lines.length; i++){
+                if(lines[i].parentItemKey === lines[row].key){
+                    bundleRows.push(lines.findIndex(x => x.record.Id === lines[i].record.Id));
+                    if(lines[i].record.Id){
+                        this.deleteLines.push(lines[i].record.Id);
+                    }
+                }
+            }
+            bundleRows.push(row);
+            bundleRows.forEach(row => {
+                if(lines.length > 1){
+                    lines.splice(row,1);
+                }else{
+                    lines = [];
+                }
+            })
+        }else{
+            if (lines.length > 1){
+                lines.splice(row,1);
+            }else{
+                lines = [];
+            }
+        }
+        this.quote.lineItems = lines;
+        this.regenerateFlatLines(0);
+        this.deleteClick = false;
+    }
+
+    // CLASS: PRODUCT LOOKUP
+    handleProductSelection(event) {
+        this.loading = true;
+        
+        // produce new QL by setting correct values
+        produceNewQL(event, this.quote)
+        .then(clone => {
+
+            // if product is a bundle
+            if(clone.record['SBQQ__Bundle__c']){
+                throw {
+                    type: 'bundle',
+                    message: 'Product not added to your quote. This product is part of a bundle. Please use the Product Selection page to continue adding this product.'
+                }
+            }
+
+            // push new QL into state
+            this.quote.lineItems = [...this.quote.lineItems, clone];
+            this.quote.nextKey += 1;
+
+            // Regenerate flat lines object
+            const flatLines = this.quote.lineItems.filter(line => !line.record['SBQQ__ProductOption__c']).map(line => {
+                return {
+                    rowId: line['key'],
+                    isNSP: nspGroupings.includes(line.record['Filtered_Grouping__c']) ? true : false,
+                    ...line.record
+                }
+            });
+
+            // if line is NSP
+            if(flatLines[flatLines.length - 1].isNSP === true){
+                // set NSP field values
+                const evt = { 
+                    detail: {
+                        row: flatLines[flatLines.length - 1],
+                        action: {
+                            name: 'NSP'
+                        }
+                    }
+                }
+                this.handleRowAction(evt);
+            }
+
+            this.flatLines = flatLines;
+
+            this.regenerateFlatLines(0);
+
+        })
+        .catch(error => {
+            console.log(error);
+            if(error.type === 'bundle'){
+                const evt = new ShowToastEvent({
+                    title: 'Incorrect Product Type', 
+                    message: error.message,
+                    variant: 'error', mode: 'dismissable'
+                });
+                this.dispatchEvent(evt);
+                this.loading = false;
+            }
+        });
+    }
 }

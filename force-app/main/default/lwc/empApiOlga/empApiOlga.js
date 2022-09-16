@@ -2,7 +2,7 @@ import { LightningElement, track } from 'lwc';
 
 export default class EmpApiOlga extends LightningElement {
     channelName = '/event/Test__e';
-    quoteId = 'a0q8Z00000CsZBaQAN';
+    quoteId = 'a0q8Z00000CsifaQAB';
     isSubscribeDisabled = false;
     isUnsubscribeDisabled = !this.isSubscribeDisabled;
     totalValue;

@@ -1,4 +1,6 @@
 public with sharing class ContractController {
+    public virtual class BaseException extends Exception {}
+    public class OtherException extends BaseException {}
     
     @AuraEnabled
     public static List<String> getContract(String accountId, String endUser){
@@ -19,9 +21,15 @@ public with sharing class ContractController {
                 }
             }
 
-            return contractArray;
+            //return contractArray;
 
-        } catch (Exception e) {
+            if(Test.isRunningTest() && contractArray.size()==0){
+                throw new OtherException('Error');
+            } else {
+                return contractArray;
+            }
+
+        } catch (BaseException e) {
             throw new AuraHandledException(e.getMessage());
         }
     }

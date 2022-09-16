@@ -30,9 +30,9 @@ const priceAdjustments = async(quote) => {
     const recalculatedQuoteLines = await wrapQuoteLine({qlJSON: JSON.stringify(quoteLines)});
     
     // replace formula fields in original quote line
-    for(let line of quote.lineItems){
-        let index = recalculatedQuoteLines.findIndex(recalc => recalc['Id'] === line.record['Id']);
-        line.record['SBQQ__NetTotal__c'] = recalculatedQuoteLines[index]['SBQQ__NetTotal__c'];
+    for(let i = 0; i < quote.lineItems.length; i++){
+        quote.lineItems[i].record['Quote_Line_Name__c'] = recalculatedQuoteLines[i]['Quote_Line_Name__c'];
+        quote.lineItems[i].record['SBQQ__NetTotal__c'] = recalculatedQuoteLines[i]['SBQQ__NetTotal__c'];
     }
     
     return quote;
@@ -130,7 +130,6 @@ const productPricingTierScript = (prodTiers, quoteModel, uomConvertMap) => {
             
             pricingTierMap[record.Customer_Tier__c+'~'+record.Prod_Level_1__c+'~'+record.Prod_Level_2__c+'~'+record.Prod_Level_3__c+'~'+record.Prod_Level_4__c] = pricingTierMapRecs;
         }
-        //if key exists
         else {
             //get existing records 
             pricingTierMapRecs = pricingTierMap[record.Customer_Tier__c+'~'+record.Prod_Level_1__c+'~'+record.Prod_Level_2__c+'~'+record.Prod_Level_3__c+'~'+record.Prod_Level_4__c];
@@ -140,6 +139,8 @@ const productPricingTierScript = (prodTiers, quoteModel, uomConvertMap) => {
             pricingTierMap[record.Customer_Tier__c+'~'+record.Prod_Level_1__c+'~'+record.Prod_Level_2__c+'~'+record.Prod_Level_3__c+'~'+record.Prod_Level_4__c] = pricingTierMapRecs;											
         }
     });
+
+    console.log('pricing tier map: ', pricingTierMap);
     
     quoteModel.lineItems.forEach(line => {
         let pricingTierMapQtyRecs = [];
@@ -239,6 +240,7 @@ const customerTierScript = (tiers, quote) => {
     // if the query returned rows then build the keys else we still need to set all lines to List.
     log('Begin Tier Script');
     let customerTierObj = {};
+    console.log(tiers);
     if (tiers?.length) {
         customerTierObj = tiers.reduce((o, record) => Object.assign(o, { [record.Account__c + '~' + record.Prod_Level_1__c + '~' + record.Prod_Level_2__c]: record }), {});
     }
@@ -652,6 +654,59 @@ const setPatchPanelStubbedPrice = line => {
     return line
 
 }
+const setPremiseCableName = (line, premiseMaps) => {
+    
+    const { premiseJacketColorMap, premiseJacketPrintMap, premiseSubunitColorMap } = premiseMaps;
+    try{
+    const jacketColor = line.record['Color__c'];
+    const jacketPrint = line.record['Jacket_Print__c'];
+    const subunitColor = line.record['Subunit_Color__c'];
+    let itemDesc = line.record['SBQQ__Description__c'];
+
+    // If jacket color has already been added to desc
+    const regex = /\b, [^,]* jacket color\b/g;
+    if(itemDesc){
+        const match = itemDesc.match(regex);
+        if(match.length){
+            // replace with empty string
+            itemDesc = itemDesc.replace(match[0], '');
+            console.log(itemDesc);
+        }
+    }
+
+    let FinalItem = line.record['SBQQ__ProductName__c'];
+
+    console.log(FinalItem);
+
+    log('Name change required for line: '+ line.record['Name']);
+
+    if(jacketPrint){
+        if(premiseJacketPrintMap[jacketPrint]){
+            FinalItem = FinalItem.substring(0,8) + premiseJacketPrintMap[jacketPrint] + FinalItem.substring(9, FinalItem.length);
+        }
+    }
+
+    if (jacketColor) {
+        if(premiseJacketColorMap[jacketColor]){
+            FinalItem = FinalItem.substring(0,9) + premiseJacketColorMap[jacketColor] + FinalItem.substring(10, FinalItem.length);
+            itemDesc = itemDesc + ", " + jacketColor + " jacket color"; 
+        }
+        console.log(itemDesc);
+    }
+
+    if (subunitColor) {
+        if (premiseSubunitColorMap[subunitColor]) {
+            FinalItem = FinalItem.substring(0,10) + premiseSubunitColorMap[subunitColor] + FinalItem.substring(11, FinalItem.length);
+        }
+    }
+
+    line.record['SBQQ__PackageProductCode__c'] = FinalItem;
+	line.record['SBQQ__PackageProductDescription__c'] = itemDesc;
+	line.record['SBQQ__Description__c'] = itemDesc;
+
+    log('FinalItem: ' + FinalItem);
+    }catch(error){console.log(error)}
+}
 
 const buildOverridesScheduleMap = async(quoteModel) => {
     const newDiscountSchedules = quoteModel.lineItems
@@ -663,14 +718,44 @@ const buildOverridesScheduleMap = async(quoteModel) => {
     return getSalesAgreements(listNewDiscountSchedule);
 }
 
-const onBeforePriceRules = async(quoteModel, ascendPackagingMap, tiers, prodTiers, uomRecords, schedules) => {
+const buildPremiseMaps = (premiseRecords) => {
+    const { JacketColor, JacketPrint, SubunitColor } = premiseRecords;
+    const premiseJacketColorMap = {};
+    const premiseJacketPrintMap = {};
+    const premiseSubunitColorMap = {};
+
+    if(JacketColor.length){
+        JacketColor.forEach(record => {
+            premiseJacketColorMap[record.Name] = record['Catalog_Element__c'];
+        });
+    }
+
+    if(JacketPrint.length){
+        JacketPrint.forEach(record => {
+            premiseJacketPrintMap[record.Name] = record['Catalog_Element__c'];
+        });
+    }
+
+    if(SubunitColor.length){
+        SubunitColor.forEach(record => {
+            premiseSubunitColorMap[record.Name] = record['Catalog_Element__c'];
+        });
+    }
+
+    return { premiseJacketColorMap, premiseJacketPrintMap, premiseSubunitColorMap }
+
+}
+
+const onBeforePriceRules = async(quoteModel, ascendPackagingMap, tiers, prodTiers, uomRecords, schedules, premiseRecords) => {
+
+    // build Premise Maps
+    const premiseMaps = buildPremiseMaps(premiseRecords);
 
     // Build overrides discount map
     const overridesDiscountMap = await buildOverridesScheduleMap(quoteModel)
 
     // Get Agreements Maps
     const discountMap = getSalesAgreements(schedules);
-    console.log(discountMap, overridesDiscountMap);
 
     // Build UOM Convert Map
     const uomConvertMap = buildUOMConvertMap(uomRecords);
@@ -691,6 +776,12 @@ const onBeforePriceRules = async(quoteModel, ascendPackagingMap, tiers, prodTier
                 log('calling setPatchPanelStubbedPrice');							
                 setPatchPanelStubbedPrice(line);							
             }
+
+            //if filtered grouping is Premise
+            if (line.record['Filtered_Grouping__c'] == 'Premise Cable') {
+                log('calling setPremiseCableName');							
+                setPremiseCableName (line, premiseMaps);							
+            }
             
             //if filtered grouping is Bus Conductor
             if (line.record['Filtered_Grouping__c'] && line.record['Filtered_Grouping__c'].indexOf('Bus Conductor') >= 0) {
@@ -708,7 +799,7 @@ const onBeforePriceRules = async(quoteModel, ascendPackagingMap, tiers, prodTier
 
             // if Product Lead Time Category is defined
             let inSLTT = false; // Flag to let async function resolve
-            if (line.record['Product_Lead_Time_Category__c'] !== null){
+            if (line.record['Product_Lead_Time_Category__c']){
                 inSLTT = true;
                 log('calling setLeadTimeTier');
                 setLeadTimeTier(line, quoteModel)
@@ -732,4 +823,29 @@ const onBeforePriceRules = async(quoteModel, ascendPackagingMap, tiers, prodTier
 
 }
 
-export { onBeforePriceRules };
+const onBeforePriceRulesBatchable = async(quoteModel, ascendPackagingMap, tiers, prodTiers, uomRecords, schedules, premiseRecords) =>{
+    const finalQuote = quoteModel;
+    let array = quoteModel.lineItems;
+    let quoteSaver = [];
+    let newLines = [];
+    while (array.length > 0){
+        let newQuote = {
+            record:{
+                End_User__c : quoteModel.record['End_User__c'],
+                SBQQ__Account__c : quoteModel.record['SBQQ__Account__c']
+            }
+        };
+        const batchSize = 100;
+        const linesBatch = array.splice(0, batchSize);
+        newQuote.lineItems = linesBatch;
+        quoteSaver.push(newQuote);
+    }
+    const results = await Promise.all(quoteSaver.map(quote => onBeforePriceRules(quote, ascendPackagingMap, tiers, prodTiers, uomRecords, schedules, premiseRecords)));
+    results.forEach(quote =>{
+        newLines = newLines.concat(quote.lineItems);
+    })
+    finalQuote.lineItems = newLines;
+    return finalQuote;
+}
+
+export { onBeforePriceRules, onBeforePriceRulesBatchable };

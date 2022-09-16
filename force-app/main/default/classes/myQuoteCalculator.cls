@@ -14,8 +14,8 @@ public class myQuoteCalculator {
     @AuraEnabled
     public static String save(String quoteJSON){
         try {
-            String result = SBQQ.ServiceRouter.save('SBQQ.QuoteAPI.QuoteSaver', quoteJSON);
-            return result;
+            return SBQQ.ServiceRouter.save('SBQQ.QuoteAPI.QuoteSaver', quoteJSON);
+            // return result;
         } catch (Exception e) {
             throw new AuraHandledException(e.getMessage());
         }

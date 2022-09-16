@@ -1,5 +1,6 @@
 import queryCLTT from '@salesforce/apex/CustomerLeadTimeTierController.queryCLTT';
 import queryPLT from '@salesforce/apex/ProdLeadTimeController.queryPLT';
+import queryNewSchedules from '@salesforce/apex/ContractController.getDiscountSchedulesById';
 import wrapQuoteLine from '@salesforce/apex/QuoteController.wrapQuoteLine';
 
 const log = (print) => {
@@ -36,6 +37,27 @@ const priceAdjustments = async(quote) => {
     
     return quote;
 }
+
+// Discount Schedule Map
+const getSalesAgreements = schedules => {
+    const scheduleMap = {};
+    const tierMap = {};
+    
+    if(schedules.length){
+        schedules.forEach(record => {
+            scheduleMap[record['SBQQ__Product__c']] = record;
+            if(record['active_price_breaks__c']){
+                tierMap[record['SBQQ__Product__c']] = record['SBQQ__DiscountTiers__r'];
+            }
+        });
+    }
+
+    return {
+        scheduleMap,
+        tierMap
+    }
+}
+
 // UOM Conversion Map
 const buildUOMConvertMap = records => {
 
@@ -121,20 +143,44 @@ const productPricingTierScript = (prodTiers, quoteModel, uomConvertMap) => {
     
     quoteModel.lineItems.forEach(line => {
         let pricingTierMapQtyRecs = [];
+        let tier = line.record['Tier__c'];
 
-        if (line.record['ProdLevel1__c'] && line.record['Tier__c']) {
+        //if price was overriden by user, skip over this line
+        if (line.record['Base_Price_Override__c']) {
+            log('price was overriden by user for line: '+ line.record['Name']);
+            line.record['SBQQ__SpecialPrice__c'] = line.record['Base_Price_Override__c'];
+            line.record['SBQQ__SpecialPriceType__c'] = "Custom";
+            line.record['SBQQ__SpecialPriceDescription__c'] = "Price overriden by user";          // can be upto 80 chars
+            log('overriden price = ' + line.record['SBQQ__SpecialPrice__c']);
+            log('list price = ' + line.record['SBQQ__ListPrice__c']);
+            return;
+        }
 
-            if (pricingTierMap[line.record['Tier__c'] + '~' + line.record['ProdLevel1__c'] + '~' + line.record['ProdLevel2__c'] + '~' + line.record['ProdLevel3__c'] + '~' + line.record['ProdLevel4__c']]) {
-                pricingTierMapQtyRecs = pricingTierMap[line.record['Tier__c'] + '~' + line.record['ProdLevel1__c'] + '~' + line.record['ProdLevel2__c'] + '~' + line.record['ProdLevel3__c'] + '~' + line.record['ProdLevel4__c']]
+        //if a contracted price was found earlier, skip over this line
+        if (line.record['SBQQ__SpecialPriceType__c'] == "Contracted Price") {
+            log('contracted price exists for line: '+ line.record['Name']);
+            return; 
+        }
+
+        //if tier was overriden by user, use the new customer tier for price calculation
+        if (line.record['New_Customer_Tier__c']) {
+            log('tier was overriden by user for line: '+ line.record['Name']);
+            tier = line.record['New_Customer_Tier__c'];
+        }
+
+        if (line.record['ProdLevel1__c'] && tier) {
+
+            if (pricingTierMap[tier + '~' + line.record['ProdLevel1__c'] + '~' + line.record['ProdLevel2__c'] + '~' + line.record['ProdLevel3__c'] + '~' + line.record['ProdLevel4__c']]) {
+                pricingTierMapQtyRecs = pricingTierMap[tier + '~' + line.record['ProdLevel1__c'] + '~' + line.record['ProdLevel2__c'] + '~' + line.record['ProdLevel3__c'] + '~' + line.record['ProdLevel4__c']]
             }
-            else if (pricingTierMap[line.record['Tier__c'] + '~' + line.record['ProdLevel1__c'] + '~' + line.record['ProdLevel2__c'] + '~' + line.record['ProdLevel3__c'] + '~Any Value']) {
-                pricingTierMapQtyRecs = pricingTierMap[line.record['Tier__c'] + '~' + line.record['ProdLevel1__c'] + '~' + line.record['ProdLevel2__c'] + '~' + line.record['ProdLevel3__c'] + '~Any Value']
+            else if (pricingTierMap[tier + '~' + line.record['ProdLevel1__c'] + '~' + line.record['ProdLevel2__c'] + '~' + line.record['ProdLevel3__c'] + '~Any Value']) {
+                pricingTierMapQtyRecs = pricingTierMap[tier + '~' + line.record['ProdLevel1__c'] + '~' + line.record['ProdLevel2__c'] + '~' + line.record['ProdLevel3__c'] + '~Any Value']
             }
-            else if (pricingTierMap[line.record['Tier__c'] + '~' + line.record['ProdLevel1__c'] + '~' + line.record['ProdLevel2__c'] + '~Any Value~Any Value']) {
-                pricingTierMapQtyRecs = pricingTierMap[line.record['Tier__c'] + '~' + line.record['ProdLevel1__c'] + '~' + line.record['ProdLevel2__c'] + '~Any Value~Any Value']
+            else if (pricingTierMap[tier + '~' + line.record['ProdLevel1__c'] + '~' + line.record['ProdLevel2__c'] + '~Any Value~Any Value']) {
+                pricingTierMapQtyRecs = pricingTierMap[tier + '~' + line.record['ProdLevel1__c'] + '~' + line.record['ProdLevel2__c'] + '~Any Value~Any Value']
             }
-            else if (pricingTierMap[line.record['Tier__c'] + '~' + line.record['ProdLevel1__c'] + '~Any Value~Any Value~Any Value']) {
-                pricingTierMapQtyRecs = pricingTierMap[line.record['Tier__c'] + '~' + line.record['ProdLevel1__c'] + '~Any Value~Any Value~Any Value']
+            else if (pricingTierMap[tier + '~' + line.record['ProdLevel1__c'] + '~Any Value~Any Value~Any Value']) {
+                pricingTierMapQtyRecs = pricingTierMap[tier + '~' + line.record['ProdLevel1__c'] + '~Any Value~Any Value~Any Value']
             }
         }
 
@@ -199,6 +245,19 @@ const customerTierScript = (tiers, quote) => {
 
     //now loop through lines and first try to get the prod level 1 and prod level 2 specific , if not try to get prod level 1 specific , if not then List
     quote.lineItems.forEach(line => {
+
+        //if tier was overriden by user, skip over this line
+        if (line.record['New_Customer_Tier__c']) {
+            log('tier was overriden by user for line: '+ line.record['Name']);
+            return; 
+        }
+
+        //if price was overriden by user, skip over this line
+        if (line.record['Base_Price_Override__c']) {
+            log('price was overriden by user for line: '+ line.record['Name']);
+            return; 
+        }
+
         line.record['Tier__c'] = 'List';
         if (customerTierObj[quote.record['SBQQ__Account__c'] + '~' + line.record['ProdLevel1__c'] + '~' + line.record['ProdLevel2__c']]) {
 
@@ -250,6 +309,132 @@ const setLeadTimeTier = async (line, quoteModel) => {
     line.record.Quoted_Lead_Time__c = thisTier;
     return line;
     
+}
+
+const getOverriddenContractPrice = async(line, discountMap) => {
+    
+    const productId = line.record['SBQQ__Product__c'];
+    let uom = line.record['UOM__c'];
+    const { scheduleMap, tierMap } = discountMap;
+
+    if(!uom){
+        uom = line.record['Primary_UOM__c']
+    }
+
+    // if product Id matches key in discount schedule map
+    let price, priceUom, priceDescription, discTierId, quotedQtyInContractUOM;
+    if(Object.keys(scheduleMap).includes(line.record['SBQQ__Product__c'])){
+        price = scheduleMap[productId]['Fixed_Price_Adj__c'];
+        priceUom = scheduleMap[productId]['UOM__c'];
+        priceDescription = "Cont=" + scheduleMap[productId]['Contract__c'] + " DiscSched=" + scheduleMap[productId]['Id'];
+
+        log('overriden discount schedule price = ' + price);
+
+        // if entry has any tier records
+        if(scheduleMap[productId]['active_price_breaks__c']){
+
+            const discTierRecs = tierMap[productId];
+            
+            log('Overriden discount tier exists, use discount tier price instead of discount schedule price');
+
+            quotedQtyInContractUOM = convertUOM(line.record['SBQQ__Quantity__c'], uom, priceUom, line.record['SBQQ__Product__c'], line.record['ProdLevel1__c'], line.record['ProdLevel2__c']);
+
+            log('quoted qty in contract UOM = '+ quotedQtyInContractUOM + ' / ' + priceUom);
+
+            if (quotedQtyInContractUOM) {
+							
+                for (let i = 0; i < discTierRecs.length; i++) {
+                    
+                    if (discTierRecs[i].SBQQ__LowerBound__c <= quotedQtyInContractUOM && quotedQtyInContractUOM < discTierRecs[i].SBQQ__UpperBound__c) {
+                        price = discTierRecs[i].SBQQ__Price__c;
+                        priceDescription += " DiscTier=" + discTierRecs[i].Id;
+                        discTierId = discTierRecs[i].Id;
+                        log('Overriden discount tier price = ' + price);
+                        break; 
+                    }
+                }
+            }
+        }
+
+        //Convert price from contract UOM to quoted UOM
+        price = convertUOM(price, priceUom, uom, line.record['SBQQ__Product__c'], line.record['ProdLevel1__c'], line.record['ProdLevel2__c']);
+        log('contract price in quoted UOM = '+ price + ' / ' + uom);
+            
+        if (price) {
+            line.record['SBQQ__SpecialPrice__c'] = price;
+            line.record['SBQQ__SpecialPriceType__c'] = "Contracted Price";
+            line.record['SBQQ__SpecialPriceDescription__c'] = priceDescription;          // can be upto 80 chars
+            line.record['SBQQ__DiscountSchedule__c'] = line.record['New_Discount_Schedule__c']; 
+            line.record['SBQQ__DiscountScheduleType__c'] = scheduleMap[productId]['SBQQ__Type__c']; 
+            
+            if (discTierId) {
+                line.record['SBQQ__DiscountTier__c'] = discTierId;
+            }
+        }
+    }
+}
+
+const getContractPrice = async(line, discountMap) => {
+    
+    const productId = line.record['SBQQ__Product__c'];
+    let uom = line.record['UOM__c'];
+    const { scheduleMap, tierMap } = discountMap;
+
+    if(!uom){
+        uom = line.record['Primary_UOM__c']
+    }
+
+    // if product Id matches key in discount schedule map
+    let price, priceUom, priceDescription, discTierId, quotedQtyInContractUOM;
+    if(Object.keys(scheduleMap).includes(line.record['SBQQ__Product__c'])){
+        price = scheduleMap[productId]['Fixed_Price_Adj__c'];
+        priceUom = scheduleMap[productId]['UOM__c'];
+        priceDescription = "Cont=" + scheduleMap[productId]['Contract__c'] + " DiscSched=" + scheduleMap[productId]['Id'];
+
+        log('contract price/price UOM/active price breaks = '+ price + ' / ' + priceUom + ' / '+ scheduleMap[productId]['active_price_breaks__c']);
+
+        // if entry has any tier records
+        if(scheduleMap[productId]['active_price_breaks__c']){
+            
+            const discTierRecs = tierMap[productId];
+            
+            log('discount tier exists, use discount tier price instead of discount schedule price');
+
+            quotedQtyInContractUOM = convertUOM(line.record['SBQQ__Quantity__c'], uom, priceUom, line.record['SBQQ__Product__c'], line.record['ProdLevel1__c'], line.record['ProdLevel2__c']);
+
+            log('quoted qty in contract UOM = '+ quotedQtyInContractUOM + ' / ' + priceUom);
+
+            if (quotedQtyInContractUOM) {
+							
+                for (let i = 0; i < discTierRecs.length; i++) {
+                    
+                    if (discTierRecs[i].SBQQ__LowerBound__c <= quotedQtyInContractUOM && quotedQtyInContractUOM < discTierRecs[i].SBQQ__UpperBound__c) {
+                        price = discTierRecs[i].SBQQ__Price__c;
+                        priceDescription += " DiscTier=" + discTierRecs[i].Id;
+                        discTierId = discTierRecs[i].Id;
+                        log('discount tier price = ' + price);
+                        break; 
+                    }
+                }
+            }
+        }
+
+        //Convert price from contract UOM to quoted UOM
+        price = convertUOM(price, priceUom, uom, line.record['SBQQ__Product__c'], line.record['ProdLevel1__c'], line.record['ProdLevel2__c']);
+        log('contract price in quoted UOM = '+ price + ' / ' + uom);
+            
+        if (price) {
+            line.record['SBQQ__SpecialPrice__c'] = price;
+            line.record['SBQQ__SpecialPriceType__c'] = "Contracted Price";
+            line.record['SBQQ__SpecialPriceDescription__c'] = priceDescription;          // can be upto 80 chars
+            line.record['SBQQ__DiscountSchedule__c'] = line.record['New_Discount_Schedule__c']; 
+            line.record['SBQQ__DiscountScheduleType__c'] = scheduleMap[productId]['SBQQ__Type__c']; 
+            
+            if (discTierId) {
+                line.record['SBQQ__DiscountTier__c'] = discTierId;
+            }
+        }
+    }
 }
 
 const getProdLeadTimeTier = async(prodLeadTimeCat, myLeadTimeTier) => {
@@ -467,8 +652,97 @@ const setPatchPanelStubbedPrice = line => {
     return line
 
 }
+const setPremiseCableName = (line, premiseMaps) => {
+    
+    const { premiseJacketColorMap, premiseJacketPrintMap, premiseSubunitColorMap } = premiseMaps;
+    try{
+    const jacketColor = line.record['Color__c'];
+    const jacketPrint = line.record['Jacket_Print__c'];
+    const subunitColor = line.record['Subunit_Color__c'];
+    let itemDesc = line.record['SBQQ__Description__c'];
+    let FinalItem = line.record['SBQQ__ProductName__c'];
 
-const onBeforePriceRules = async(quoteModel, ascendPackagingMap, tiers, prodTiers, uomRecords) => {
+    console.log(FinalItem);
+    console.log(premiseJacketPrintMap, premiseJacketColorMap, premiseSubunitColorMap);
+    console.log(premiseJacketPrintMap[jacketPrint]);
+
+    log('Name change required for line: '+ line.record['Name']);
+
+    if(jacketPrint){
+        if(premiseJacketPrintMap[jacketPrint]){
+            FinalItem = FinalItem.substring(0,8) + premiseJacketPrintMap[jacketPrint] + FinalItem.substring(9, FinalItem.length);
+        }
+    }
+
+    if (jacketColor) {
+        if(premiseJacketColorMap[jacketColor]){
+            FinalItem = FinalItem.substring(0,9) + premiseJacketColorMap[jacketColor] + FinalItem.substring(10, FinalItem.length);
+            itemDesc = itemDesc + ", " + jacketColor + " jacket color"; 
+        }
+    }
+
+    if (subunitColor) {
+        if (premiseSubunitColorMap[subunitColor]) {
+            FinalItem = FinalItem.substring(0,10) + premiseSubunitColorMap[subunitColor] + FinalItem.substring(11, FinalItem.length);
+        }
+    }
+
+    line.record['SBQQ__PackageProductCode__c'] = FinalItem;
+	line.record['SBQQ__PackageProductDescription__c'] = itemDesc;
+	line.record['SBQQ__Description__c'] = itemDesc;
+
+    log('FinalItem: ' + FinalItem);
+    }catch(error){console.log(error)}
+}
+
+const buildOverridesScheduleMap = async(quoteModel) => {
+    const newDiscountSchedules = quoteModel.lineItems
+        .filter(line => line.record['New_Discount_Schedule__c'])
+        .map(line => {return line.record['New_Discount_Schedule__c']});
+
+    const newDiscountSchedulesList = "('" + newDiscountSchedules.join("', '") + "')";
+    const listNewDiscountSchedule = await queryNewSchedules({scheduleArray: newDiscountSchedulesList});
+    return getSalesAgreements(listNewDiscountSchedule);
+}
+
+const buildPremiseMaps = (premiseRecords) => {
+    const { JacketColor, JacketPrint, SubunitColor } = premiseRecords;
+    const premiseJacketColorMap = {};
+    const premiseJacketPrintMap = {};
+    const premiseSubunitColorMap = {};
+
+    if(JacketColor.length){
+        JacketColor.forEach(record => {
+            premiseJacketColorMap[record.Name] = record['Catalog_Element__c'];
+        });
+    }
+
+    if(JacketPrint.length){
+        JacketPrint.forEach(record => {
+            premiseJacketPrintMap[record.Name] = record['Catalog_Element__c'];
+        });
+    }
+
+    if(SubunitColor.length){
+        SubunitColor.forEach(record => {
+            premiseSubunitColorMap[record.Name] = record['Catalog_Element__c'];
+        });
+    }
+
+    return { premiseJacketColorMap, premiseJacketPrintMap, premiseSubunitColorMap }
+
+}
+
+const onBeforePriceRules = async(quoteModel, ascendPackagingMap, tiers, prodTiers, uomRecords, schedules, premiseRecords) => {
+
+    // build Premise Maps
+    const premiseMaps = buildPremiseMaps(premiseRecords);
+
+    // Build overrides discount map
+    const overridesDiscountMap = await buildOverridesScheduleMap(quoteModel)
+
+    // Get Agreements Maps
+    const discountMap = getSalesAgreements(schedules);
 
     // Build UOM Convert Map
     const uomConvertMap = buildUOMConvertMap(uomRecords);
@@ -489,11 +763,25 @@ const onBeforePriceRules = async(quoteModel, ascendPackagingMap, tiers, prodTier
                 log('calling setPatchPanelStubbedPrice');							
                 setPatchPanelStubbedPrice(line);							
             }
+
+            //if filtered grouping is Premise
+            if (line.record['Filtered_Grouping__c'] == 'Premise Cable') {
+                log('calling setPremiseCableName');							
+                setPremiseCableName (line, premiseMaps);							
+            }
             
             //if filtered grouping is Bus Conductor
             if (line.record['Filtered_Grouping__c'] && line.record['Filtered_Grouping__c'].indexOf('Bus Conductor') >= 0) {
                 log('calling Bus Conductor pricing');
                 setBusConductorPrice(line);
+            }
+
+            if (line.record['New_Discount_Schedule__c']) {
+                log('sales agreement overriden at line level');
+                getOverriddenContractPrice(line, overridesDiscountMap);
+            } else {
+                log('contract exists, check if quoted product is on the contract');
+                getContractPrice(line, discountMap);
             }
 
             // if Product Lead Time Category is defined
@@ -522,4 +810,29 @@ const onBeforePriceRules = async(quoteModel, ascendPackagingMap, tiers, prodTier
 
 }
 
-export { onBeforePriceRules };
+const onBeforePriceRulesBatchable = async(quoteModel, ascendPackagingMap, tiers, prodTiers, uomRecords, schedules, premiseRecords) =>{
+    const finalQuote = quoteModel;
+    let array = quoteModel.lineItems;
+    let quoteSaver = [];
+    let newLines = [];
+    while (array.length > 0){
+        let newQuote = {
+            record:{
+                End_User__c : quoteModel.record['End_User__c'],
+                SBQQ__Account__c : quoteModel.record['SBQQ__Account__c']
+            }
+        };
+        const batchSize = 100;
+        const linesBatch = array.splice(0, batchSize);
+        newQuote.lineItems = linesBatch;
+        quoteSaver.push(newQuote);
+    }
+    const results = await Promise.all(quoteSaver.map(quote => onBeforePriceRules(quote, ascendPackagingMap, tiers, prodTiers, uomRecords, schedules, premiseRecords)));
+    results.forEach(quote =>{
+        newLines = newLines.concat(quote.lineItems);
+    })
+    finalQuote.lineItems = newLines;
+    return finalQuote;
+}
+
+export { onBeforePriceRules, onBeforePriceRulesBatchable };

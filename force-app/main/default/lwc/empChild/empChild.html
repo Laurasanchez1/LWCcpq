@@ -1,27 +1,160 @@
+<!-- sldsValidatorIgnore -->
 <template>
-    <lightning-spinner if:true={loading} alternative-text="Loading" size="medium"></lightning-spinner>
-    <lightning-datatable
-        key-field="id"
-        data={flatLines}
-        columns={columns}
-        onsave={saveValues}
-        oncellchange={handleCellChange}
-        oncancel={handleCancel}
-        onrowaction={handleRowAction}
-        onrowselection={handleRowSelection}>
-    </lightning-datatable>
+    <div class="">
+    <lightning-tabset>
+        <lightning-tab label="Quote Home" value="Home" onactive={handleActive}>
+            <!--LOOK UP FIELD START-->
+            <template if:true={isHomeTab}>
+                <div class="slds-var-m-left_small slds-var-m-right_small slds-var-m-top_small slds-var-m-bottom_small">
+                    <c-bl_custom-lookup record-id={quoteId} option-is-customer-part={isCustomerPart} 
+                        search-placeholder="Search Product" icon-name="standard:products" onlookupselected={handleProductSelection}>
+                    </c-bl_custom-lookup>
+                </div>
+            </template>
+    <!--LOOK UP FIELD END-->
+            <!--PAGINATION CONTROL START-->
+            <div>
+                <p class="slds-align_absolute-center"><b> Quote lines: {linesLength} </b></p>
+                <p class="slds-align_absolute-center"><b> Page {pageHome} of {totalPageHome} </b></p>
+                <lightning-button-group class="slds-align_absolute-center slds-var-m-bottom_small">
+                    <lightning-button label="First" icon-name="utility:chevronleft" onclick={firstHandler} class="stretchButton"></lightning-button>
+                    <lightning-button label="Previous" icon-name="utility:chevronleft" onclick={previousHandler} class="stretchButton"></lightning-button>
+                    <lightning-button label="Next" icon-name="utility:chevronright" icon-position="right" onclick={nextHandler} class="stretchButton"></lightning-button>
+                    <lightning-button label="Last" icon-name="utility:chevronright" icon-position="right" onclick={lastHandler} class="stretchButton"></lightning-button>
+                </lightning-button-group>
+            </div>
+            <!--PAGINATION CONTROL END column-widths-mode="auto" -->
+            <lightning-spinner if:true={loading} alternative-text="Loading" size="medium"></lightning-spinner>
+            <div class="slds-align_absolute-center slds-var-m-top_small">
+                <lightning-datatable
+                key-field="id"
+                style="width:90vw !important;"
+                
+                data={dataPages}
+                columns={columns}
+                oncellchange={handleCellChange}
+                onrowaction={handleRowAction}
+                onrowselection={handleRowSelection}
+                suppress-bottom-bar
+                sorted-by={sortBy} sorted-direction={sortDirection} onsort={handleSortData}>
+            </lightning-datatable>
+            </div>
+            
+        </lightning-tab>
+
+        <lightning-tab label="Detail View" value="Detail" onactive={handleActive}>
+            <!--PAGINATION CONTROL START-->
+            <div>
+                <p class="slds-align_absolute-center"><b> Quote lines: {linesLength} </b></p>
+                <p class="slds-align_absolute-center"><b> Page {pageDetail} of {totalPageDetail} </b></p>
+                <lightning-button-group class="slds-align_absolute-center slds-var-m-bottom_small">
+                    <lightning-button label="First" icon-name="utility:chevronleft" onclick={firstHandler} class="stretchButton"></lightning-button>
+                    <lightning-button label="Previous" icon-name="utility:chevronleft" onclick={previousHandler} class="stretchButton"></lightning-button>
+                    <lightning-button label="Next" icon-name="utility:chevronright" icon-position="right" onclick={nextHandler} class="stretchButton"></lightning-button>
+                    <lightning-button label="Last" icon-name="utility:chevronright" icon-position="right" onclick={lastHandler} class="stretchButton"></lightning-button>
+                </lightning-button-group>
+            </div>
+            <!--PAGINATION CONTROL END-->
+            <div class="slds-align_absolute-center slds-var-m-top_small">
+
+            <lightning-datatable
+                key-field="id"
+                style="width:90vw !important;"
+                data={dataPages}
+                columns={detailColumns}
+                oncellchange={handleCellChange}
+                onrowaction={handleRowAction}
+                onrowselection={handleRowSelection}
+                suppress-bottom-bar
+                sorted-by={sortBy} sorted-direction={sortDirection} onsort={handleSortData}>
+            </lightning-datatable>
+            </div>
+        </lightning-tab>
+
+        <lightning-tab label="Product Notes" value="Notes" onactive={handleActive}>
+            <div>
+                <!--PAGINATION CONTROL START-->
+                <div>
+                    <p class="slds-align_absolute-center"><b> Product Notes: {prodNotesLength} </b></p>
+                    <p class="slds-align_absolute-center"><b> Page {pageProdNotes} of {totalPageNotes} </b></p>
+                    <lightning-button-group class="slds-align_absolute-center slds-var-m-bottom_small">
+                        <lightning-button label="First" icon-name="utility:chevronleft" onclick={firstHandler} class="stretchButton"></lightning-button>
+                        <lightning-button label="Previous" icon-name="utility:chevronleft" onclick={previousHandler} class="stretchButton"></lightning-button>
+                        <lightning-button label="Next" icon-name="utility:chevronright" icon-position="right" onclick={nextHandler} class="stretchButton"></lightning-button>
+                        <lightning-button label="Last" icon-name="utility:chevronright" icon-position="right" onclick={lastHandler} class="stretchButton"></lightning-button>
+                    </lightning-button-group>
+                </div>
+                <!--PAGINATION CONTROL END-->
+            </div>
+        </lightning-tab>
+
+        <lightning-tab label="Line Notes" value="Line" onactive={handleActive}>
+            <!--LINE NOTES START-->
+            <div>
+                <!--PAGINATION CONTROL START-->
+                <div>
+                    <p class="slds-align_absolute-center"><b> Quote lines: {linesLength} </b></p>
+                    <p class="slds-align_absolute-center"><b> Page {pageLineNotes} of {totalPageLines} </b></p>
+                    <lightning-button-group class="slds-align_absolute-center slds-var-m-bottom_small">
+                        <lightning-button label="First" icon-name="utility:chevronleft" onclick={firstHandler} class="stretchButton"></lightning-button>
+                        <lightning-button label="Previous" icon-name="utility:chevronleft" onclick={previousHandler} class="stretchButton"></lightning-button>
+                        <lightning-button label="Next" icon-name="utility:chevronright" icon-position="right" onclick={nextHandler} class="stretchButton"></lightning-button>
+                        <lightning-button label="Last" icon-name="utility:chevronright" icon-position="right" onclick={lastHandler} class="stretchButton"></lightning-button>
+                    </lightning-button-group>
+                </div>
+                <!--PAGINATION CONTROL END-->
+            </div>
+            <div class="slds-var-m-right_small slds-var-m-left_small slds-var-m-top_small slds-align_absolute-center">  
+                <table class='slds-table css-serial' style="width:90vw !important;">
+                    <thead>
+                        <tr>     
+                            <th></th>
+                            <th>
+                                <a data-id="Quote_Line_Name__c" onclick={sort}>
+                                    <div>Product</div>
+                                </a>
+                            </th>
+                            <th>
+                                <a data-id="SBQQ__Description__c" onclick={sort}>
+                                    <div>Description</div>
+                                </a>
+                            </th>         
+                            <th>
+                                <a data-id="Line_Note__c" onclick={sort}>
+                                    <div>Line Note</div>
+                                </a>
+                            </th>  
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <template for:each={dataPages} for:item="linenotes">
+                            <tr key={linenotes.Quote_Line_Name__c}>     
+                                <td></td>           
+                                <td width ="20%" class="slds-cell-wrap">                                
+                                    {linenotes.Quote_Line_Name__c}
+                                </td>
+                                <td width ="40%" class="slds-cell-wrap">                                
+                                    {linenotes.SBQQ__Description__c}
+                                </td>          
+                                <td width ="40%" class="slds-cell-wrap">                                
+                                    {linenotes.Line_Note__c}
+                                </td>           
+                            </tr>                                                                     
+                        </template>
+                    </tbody>
+                </table>
+            </div>
+            <!--LINE NOTES END-->
+        </lightning-tab>
+    </lightning-tabset>
+    </div>
     <!--LENGTH UOM POP-UP START-->
     <template if:true={isLengthUomModalOpen}>
         <section role="dialog" tabindex="-1" aria-labelledby="modal-heading-01" aria-modal="true" aria-describedby="modal-content-id-1" class="slds-modal slds-fade-in-open">
             <div class="slds-modal__container slds-modal__container_uom">
-                <button class="slds-button slds-button_icon slds-modal__close slds-button_icon-inverse" onclick={closeLengthUomModal}>
-                    <svg class="slds-button__icon slds-button__icon_large" aria-hidden="true">
-                      <use xlink:href="/_slds/icons/utility-sprite/svg/symbols.svg#close"></use>
-                    </svg>
-                    <span class="slds-assistive-text">Cancel and close</span>
-                </button>
                 <header class="slds-modal__header slds-var-m-left_small  slds-var-m-right_small">
                     <h2 class="slds-text-heading_medium slds-hyphenate">Changing LENGTH UOM: {dataRow.Length_UOM__c}</h2>
+                    <lightning-icon class="slds-modal__close" icon-name="utility:close" size="small" onclick={closeLengthUomPopup}></lightning-icon>
                 </header>
                 <div style="overflow: initial;" class="slds-modal__content slds-p-around_medium slds-var-m-left_small  slds-var-m-right_small" >
                     <lightning-combobox class="slds-align_absolute-center" style="width:80%" name="lengthuom" label="Length UOM" value={newLengthUOM}
@@ -39,7 +172,7 @@
     <!--LENGTH UOM POP-UP END-->
     <!--UOM POP-UP START-->
     <template if:true={isUomModalOpen}>
-        <section role="dialog" tabindex="-1" aria-labelledby="modal-heading-03" aria-modal="true" aria-describedby="modal-content-id-1" class="slds-modal slds-fade-in-open">
+        <section role="dialog" tabindex="-1" aria-labelledby="modal-heading-01" aria-modal="true" aria-describedby="modal-content-id-1" class="slds-modal slds-fade-in-open">
             <div class="slds-modal__container slds-modal__container_uom">
                 <header class="slds-modal__header slds-var-m-left_small  slds-var-m-right_small">
                     <h2 class="slds-text-heading_medium slds-hyphenate">Changing UOM: {dataRow.Uom__c}</h2>
@@ -69,7 +202,7 @@
                 </header>
                 <!--style="overflow: initial;" to show picklist values outside pop-up for combobox component-->
                 <div style="overflow: initial;" class="slds-modal__content slds-var-m-left_small  slds-var-m-right_small">
-                    <div class="slds-var-p-around_small slds-align_absolute-center slds-is-relative" style="min-height: 30vh">
+                    <div class="slds-var-p-around_small slds-align_absolute-center">
                         <template if:false={nspShowMessage}>
                             <p style="font-size: 18px;" class="slds-align_absolute-center">This quote line does not have NSP values.</p>
                         </template>
@@ -117,6 +250,30 @@
         <div class="slds-backdrop slds-backdrop_open"></div>
     </template>
     <!--POP UP NSP PRODUCTS END-->
+
+    <!--POP UP WARNING DELETE START-->
+    <template if:true={deleteClick}>
+        <section aria-modal="true" class="slds-modal slds-fade-in-open slds-align_absolute-center">
+            <div class="slds-modal__container slds-var-m-left_small  slds-var-m-right_small">
+                <header class="slds-modal__header slds-var-m-left_small  slds-var-m-right_small">
+                    <h2 class="slds-text-heading_medium slds-hyphenate">WARNING</h2>
+                    <lightning-icon class="slds-modal__close" icon-name="utility:close" size="small" onclick={closeDeleteModal}></lightning-icon>
+                </header>
+                <div class="slds-modal__content slds-var-m-left_small  slds-var-m-right_small">
+                    <div class="slds-var-p-around_small slds-align_absolute-center">
+                        <p style="font-size:160%;">Are you sure you want to delete this?</p>
+                    </div>
+                </div>
+                <footer class="slds-modal__footer slds-var-m-left_small  slds-var-m-right_small">
+                    <lightning-button variant="brand" label="Cancel" onclick={closeDeleteModal} class="slds-p-around_x-small slds-m-right_small"></lightning-button>
+                    <lightning-button variant="brand" label="Confirm" onclick={deleteModal} class="slds-p-around_x-small"></lightning-button>
+                </footer>
+            </div>
+        </section>
+        <div class="slds-backdrop slds-backdrop_open"></div>
+    </template>
+    <!--POP UP WARNING DELETE END-->
+
     <!--POP UP REORDER LINES START-->
     <template if:true={popUpReorder}>
         <!-- Modal/Popup Box LWC starts here -->
@@ -131,10 +288,10 @@
                     <h2 id="modal-heading-01" class="slds-text-heading_medium slds-hyphenate">Reorder Lines of products</h2>
                 </header>
                 <!-- Modal/Popup Box LWC body starts here -->
-                <div class="slds-modal__content slds-var-m-left_small  slds-var-m-right_small" id="modal-content-id-1">
+                <div class="slds-modal__content slds-var-m-left_small slds-var-m-right_small" id="modal-content-id-1">
                     <!--START TABLE TO REORDER -->
-                    <p class="slds-align_absolute-center slds-var-m-bottom_x-small" style="color: blue; font-size: 11px;">Number of Quote Lines: {quotelinesLength}</p>
-                    <p class="slds-align_absolute-center slds-var-m-bottom_x-small" style="color: black; font-size: 9px">To reorder lines, please drop and drag by Product Name.</p>
+                    <p class="slds-var-m-top_small slds-align_absolute-center slds-var-m-bottom_x-small" style="color: blue; font-size: 14px;">Number of Quote Lines: {quotelinesLength}</p>
+                    <p class="slds-align_absolute-center slds-var-m-bottom_x-small" style="color: black; font-size: 12px"><b>To reorder lines, please drop and drag by Product Name.</b></p>
 
                     <div class="slds-grid slds-grid_vertical slds-var-m-left_small slds-var-m-right_small">
                         <div class="slds-scrollable slds-grow">
@@ -176,6 +333,30 @@
     </template>
     <!--POP UP REORDER LINES END-->
 
+    <!--POP UP LINE NOTES START-->
+    <template if:true={lineNotePopUp}>
+        <section aria-modal="true" class="slds-modal slds-fade-in-open slds-align_absolute-center">
+            <div class="slds-modal__container slds-var-m-left_small  slds-var-m-right_small">
+                <header class="slds-modal__header slds-var-m-left_small  slds-var-m-right_small">
+                    <h2 class="slds-text-heading_medium slds-hyphenate">Line Notes: {dataRow.Quote_Line_Name__c}</h2>
+                    <lightning-icon class="slds-modal__close" icon-name="utility:close" size="small" onclick={closeLineNotes}></lightning-icon>
+                </header>
+                <div class="slds-modal__content slds-var-m-left_small  slds-var-m-right_small">
+                    <div class="slds-var-p-around_small slds-align_absolute-center">
+                        <lightning-input-rich-text style="width:90vw" placeholder="Write here your notes..." disabled-categories="FORMAT_FONT,FORMAT_TEXT,FORMAT_BODY,ALIGN_TEXT,INSERT_CONTENT,REMOVE_FORMATTING"
+                        script value={dataRow.Line_Note__c} onchange={changingLineNote}> </lightning-input-rich-text>
+
+                    </div>
+                </div>
+                <footer class="slds-modal__footer slds-var-m-left_small  slds-var-m-right_small">
+                    <lightning-button variant="brand" label="Close" onclick={closeLineNotes} class="slds-p-around_x-small slds-m-right_small"></lightning-button>
+                    <lightning-button variant="brand" label="Save" onclick={saveLineNote} class="slds-p-around_x-small slds-m-right_small"></lightning-button>
+                </footer>
+            </div>
+        </section>
+        <div class="slds-backdrop slds-backdrop_open"></div>
+    </template>
+    <!--POP UP LINE NOTES END-->
 
     <!--POP UP TIERS AND CONTRACTS START-->
     <template if:true={isOverridesModalOpen}>

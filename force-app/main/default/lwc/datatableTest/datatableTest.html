@@ -1,0 +1,41 @@
+<template>
+    <lightning-card title="Datatable With Pagination">
+      <lightning-layout multiple-rows="true" horizontal-align="center">
+        <lightning-layout-Item padding="around-small" size="12">
+               <!-- onrowselection fires when a new is selected or unselected, or page has 
+  changed with new rows in it -->
+  
+          <lightning-datatable
+            data-id="datarow"
+            columns={columns}
+            data={data}
+            key-field="Id"
+            selected-rows={selection}
+            onrowselection={rowSelection}
+          >
+          </lightning-datatable>
+        </lightning-layout-Item>
+        <lightning-layout-Item padding="around-small" flexibility="auto">
+          <lightning-button
+            label="Prev"
+            icon-name="utility:chevronleft"
+            icon-position="left"
+            onclick={previousEve}
+            disabled={disPre}
+          >
+          </lightning-button>
+          <span class="slds-p-horizontal_small">
+            Page {pageNumber} | Showing records from {afterPage}
+          </span>
+          <lightning-button
+            label="Next"
+            icon-name="utility:chevronright"
+            icon-position="right"
+            disabled={isLastPage}
+            onclick={nextEve}
+          >
+          </lightning-button>
+        </lightning-layout-Item>
+      </lightning-layout>
+    </lightning-card>
+  </template>

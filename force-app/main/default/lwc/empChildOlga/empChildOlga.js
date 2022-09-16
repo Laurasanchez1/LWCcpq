@@ -12,7 +12,7 @@ import queryProductRules from '@salesforce/apex/ProductRuleController.queryProdu
 import queryPriceRules from '@salesforce/apex/PriceRuleController.queryPriceRules';
 //
 import { onBeforePriceRules } from './qcpOlga';
-import { conditionsCheck, priceConditionsCheck, priceActionExecuter } from './utilsOlga';
+import { productRuleLookup, priceRuleLookup } from './utilsOlga';
 //import hardcodedRules from './productRules';  //not used rn
 import wrapQuoteLine from '@salesforce/apex/QuoteController.wrapQuoteLine';   //OLGA ojo change here
 
@@ -196,12 +196,12 @@ export default class EmpChildOlga extends NavigationMixin(LightningElement) {
 
             //MIN ORDER QTY LOGIC STARTS HERE --------
 
-            console.log("---Min Order Qty ---");
+            //console.log("---Min Order Qty ---");
             let minQty = parseInt(lines[myIndex].record['Minimum_Order_Qty__c']);
             let actualMinQty;
             minQty != 0 && !isNaN(minQty) ? actualMinQty = minQty : actualMinQty = 1;
             let minMult = parseInt(lines[myIndex].record['Minimum_Order_Multiple__c']);
-            console.log(actualMinQty, minMult);
+            //console.log(actualMinQty, minMult);
 
             //First check minimum quantity
             if(lines[myIndex].record['SBQQ__Quantity__c'] < minQty){
@@ -245,15 +245,20 @@ export default class EmpChildOlga extends NavigationMixin(LightningElement) {
         //PRODUCT RULE LOGIC STARTS HERE --------------------
         if(this.productRules.length !==0){
             const beforeProdRules = window.performance.now();
-            const allowSave = await this.productRuleLookup(this.productRules,this.quote);
+            const productRuleResults = await productRuleLookup(this.productRules,this.quote);
+            this.allowSave = productRuleResults.allowSave;
+            this.event = productRuleResults.event;
             const afterProdRules = window.performance.now();
-            console.log(`productRuleLookup waited ${afterProdRules - beforeProdRules} milliseconds`);
-            this.allowSave = allowSave;            
+            console.log(`productRuleLookup waited ${afterProdRules - beforeProdRules} milliseconds`);         
         }
         
         //Allowing to save if no validation product rules prevent it
-        if(this.allowSave==true){                                    //needs to be ==true so the event also dispatches here
+        if(this.allowSave==true){                                    
             console.log('saving...');
+
+            if(this.event != 'no event'){
+                this.dispatchEvent(this.event);
+            }
 
             // BLOCKPRICES LOGIC STARTS HERE -----------
             for(let line of lines){
@@ -292,18 +297,16 @@ export default class EmpChildOlga extends NavigationMixin(LightningElement) {
             //PRICE RULE LOGIC STARTS HERE --------------------
             if(this.priceRules.length !==0){
                 const startedPriceRules = window.performance.now();
-                const priceRuleExec = await this.priceRuleLookup(this.priceRules,this.quote);
+                priceRuleLookup(this.priceRules,this.quote);
                 const afterPriceRules = window.performance.now();
-                console.log(`priceRuleConditions waited ${afterPriceRules - startedPriceRules} milliseconds`);
+                console.log(`priceRuleLookup waited ${afterPriceRules - startedPriceRules} milliseconds`);
             }
             //PRICE RULE LOGIC ENDS HERE --------------------
 
         } else if(this.allowSave == false){
-            console.log('No save --> Wait for the rules to evaluate');
-        } else{
             console.log('No save --> Validation rule');
             this.loading=false;
-            this.dispatchEvent(this.allowSave);
+            this.dispatchEvent(this.event);
         }
         //PRODUCT RULE LOGIC ENDS HERE --------------------
     }
@@ -743,96 +746,6 @@ export default class EmpChildOlga extends NavigationMixin(LightningElement) {
         })
 
         return overridedLines;
-    }
-
-    //Product Rule handling
-    async productRuleLookup(productRules, quote){  //The product rules already come sorted by evaluation order from the query
-        
-        // wrap quote line model records for conversion
-        const quoteLines = quote.lineItems.map(line => {
-            const { attributes, ...other } = line.record;
-            return other;
-        });
-
-        // recalculate formula fields
-        const data = await wrapQuoteLine({qlJSON: JSON.stringify(quoteLines)});
-        //console.log('Called recalc function');
-        const evaluateQuoteLines=data;
-        //console.log(evaluateQuoteLines);
-
-        //Validation Rules
-        const valRules= productRules.filter(rule=> rule['SBQQ__Type__c']=='Validation');
-        //console.log(valRules)
-        if(valRules.length !==0){
-            for(let valRule of valRules){const triggerRule = conditionsCheck(valRule['SBQQ__ErrorConditions__r'],quote,valRule['SBQQ__ConditionsMet__c'], evaluateQuoteLines);
-                if(triggerRule!==-1){
-                const evt = new ShowToastEvent({
-                    title: 'Product Rule Error on line: '+ (parseInt(triggerRule)+1),
-                    message: valRule['SBQQ__ErrorMessage__c'],
-                    variant: 'error', mode: 'sticky'
-                    });
-                    this.dispatchEvent(evt);
-                    //return the event to dispatch it when clicking save & calculate! 
-                    return evt;     
-                }
-            };
-        } else {
-        //console.log('no validation rules here');
-        }
-
-        //Alert Rules
-        const alertRules= productRules.filter(rule=> rule['SBQQ__Type__c']=='Alert');
-        //console.log(alertRules);
-        if(alertRules.length !==0){
-            for(let alertRule of alertRules){
-                const triggerRule = conditionsCheck(alertRule['SBQQ__ErrorConditions__r'],quote, alertRule['SBQQ__ConditionsMet__c'], evaluateQuoteLines);
-                if(triggerRule!==-1 ){
-                const evt = new ShowToastEvent({
-                    title: 'Product Rule Alert on line: '+ (parseInt(triggerRule)+1),
-                    message: alertRule['SBQQ__ErrorMessage__c'],
-                    variant: 'warning', mode: 'dismissable'
-                });
-                this.dispatchEvent(evt);
-                return true;
-                }
-            };
-        }
-        //console.log('no alert rules here');
-        return true;
-    }
-
-    //Price Rule handling
-    async priceRuleLookup(priceRules,quote){
-        //console.log('entered price rule lookup');
-        console.log(priceRules);
-        console.log(quote.lineItems);
-        
-        //Variable to store the lines for which each product rule evaluates
-        let successLines = [];
-
-        //QCP states that to prevent actions to change behavior on future evaluated rules they first evaluate all the price rules conditions 
-        //And then executes actions  --> See "concurrent conditions info on" https://trailhead.salesforce.com/content/learn/modules/price-rules-in-salesforce-cpq/sequence-price-rules-for-correct-calculations
-        
-        //Evaluate all price rules conditions first
-        for(let priceRule of priceRules){
-            //console.log('Individual Price Rule');
-            //console.log(priceRule);
-            const conditionsSuccess = priceConditionsCheck(priceRule['SBQQ__PriceConditions__r'], quote, priceRule['SBQQ__ConditionsMet__c']);
-            successLines.push(conditionsSuccess);
-        }
-        console.log(successLines);
-
-        //Execute all price actions
-        for (let i=0; i < successLines.length; i++){
-            let actionLines= successLines[i];
-            let priceRuleExec = priceRules[i];
-            console.log('Price rule');
-            console.log(priceRuleExec);
-            const actionExec = priceActionExecuter(priceRuleExec['SBQQ__PriceActions__r'], quote, actionLines);
-
-        }
-        
-
     }
 
     //Reorder Lines in Pop up by Product (Quote Line Name Field)

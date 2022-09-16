@@ -1,16 +1,12 @@
 import { LightningElement, track } from 'lwc';
+import { ShowToastEvent } from 'lightning/platformShowToastEvent';
 
 export default class EmpApiLWC extends LightningElement {
-    channelName = '/event/Test__e';
-    quoteId = 'a0q8Z00000CsZBaQAN';
-    isSubscribeDisabled = false;
-    isUnsubscribeDisabled = !this.isSubscribeDisabled;
+
+    quoteId = 'a0q8Z00000CsifaQAB'; //'a0q8Z00000CtDKxQAN'; //  a0q8Z00000CsZBaQAN a0q8Z00000CrwOYQAZ
+    isCloneButtonDisabled = true;
     totalValue;
     totalValueLoading = false;
-    isCloneButtonDisabled = true;
-    // quoteLines;
-
-    subscription = {};
 
     // Tracks changes to channelName text field
     handleChannelName(event) {
@@ -45,12 +41,6 @@ export default class EmpApiLWC extends LightningElement {
     disableCloneButton(){
         this.isCloneButtonDisabled = true;
     }
-
-    // Initializes the component
-    connectedCallback() {
-        // Register error listener
-        // this.registerErrorListener();
-    }
     
     //Import Lines Button
     handleImportLines(){
@@ -76,4 +66,26 @@ export default class EmpApiLWC extends LightningElement {
         console.log('Reorder Lines');
         this.template.querySelector("c-emp-child").reorderLines();
     }
+
+    //Apply Discount
+    @track valueDiscount = undefined;
+    handleValueDiscount(event){
+        this.valueDiscount = event.detail.value;
+    }
+
+    handleApplyDiscount(){
+        if (this.valueDiscount != undefined){
+            this.template.querySelector('c-emp-child').applyDiscountInLines(this.valueDiscount);
+            this.valueDiscount = undefined; 
+        } else {
+            const evt = new ShowToastEvent({
+                title: 'No Line Discount value',
+                message: 'Please add a line discount to apply',
+                variant: 'error',
+                mode: 'sticky'
+            });
+            this.dispatchEvent(evt);
+        }
+    }
+    
 }

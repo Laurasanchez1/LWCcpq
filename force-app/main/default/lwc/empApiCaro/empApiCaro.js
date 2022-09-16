@@ -1,8 +1,10 @@
 import { LightningElement, track } from 'lwc';
+import { ShowToastEvent } from 'lightning/platformShowToastEvent';
+
 
 export default class EmpApiCaro extends LightningElement {
     channelName = '/event/Test__e';
-    quoteId = 'a0q8Z00000CrwOYQAZ'; //  a0q8Z00000CsZBaQAN
+    quoteId = 'a0q8Z00000CsZBaQAN'; //  a0q8Z00000CsZBaQAN a0q8Z00000CrwOYQAZ
     isSubscribeDisabled = false;
     isUnsubscribeDisabled = !this.isSubscribeDisabled;
     totalValue;
@@ -77,4 +79,26 @@ export default class EmpApiCaro extends LightningElement {
         this.template.querySelector("c-emp-child-caro").reorderLines();
     }
 
+
+    //Apply Discount
+    @track valueDiscount = undefined;
+    handleValueDiscount(event){
+        this.valueDiscount = event.detail.value;
+    }
+
+    handleApplyDiscount(){
+        if (this.valueDiscount != undefined){
+            this.template.querySelector('c-emp-child-caro').applyDiscountInLines(this.valueDiscount);
+            this.valueDiscount = undefined; 
+        } else {
+            const evt = new ShowToastEvent({
+                title: 'No Line Discount value',
+                message: 'Please add a line discount to apply',
+                variant: 'error',
+                mode: 'sticky'
+            });
+            this.dispatchEvent(evt);
+        }
+    }
+    
 }
